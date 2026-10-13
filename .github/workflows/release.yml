@@ -18,6 +18,9 @@ jobs:
       CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
       AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
       AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+      EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+      EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -71,3 +74,34 @@ jobs:
             --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
             --artifacts-dir dist/signed
           gh release upload "$GITHUB_REF_NAME" dist/signed/*.xpi --clobber
+
+      - name: Publish to Edge Add-ons
+        if: env.EDGE_PRODUCT_ID != ''
+        run: |
+          api="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID/submissions"
+          auth=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
+
+          operation() {
+            curl -sS --fail-with-body -D - -o /dev/null "${auth[@]}" "$@" \
+              | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n] }'
+          }
+
+          wait_for() {
+            for _ in $(seq 1 60); do
+              status=$(curl -sS --fail-with-body "${auth[@]}" "$1" | jq -r '.status')
+              case "$status" in
+                Succeeded) return 0 ;;
+                Failed) curl -sS "${auth[@]}" "$1"; echo "::error::Edge operation failed"; return 1 ;;
+              esac
+              sleep 10
+            done
+            echo "::error::Timed out waiting for $1"
+            return 1
+          }
+
+          upload=$(operation -H "Content-Type: application/zip" \
+            --data-binary @"dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip" "$api/draft/package")
+          wait_for "$api/draft/package/operations/$upload"
+
+          publish=$(operation -X POST -H "Content-Type: application/json" -d '{"notes":"Release ${{ github.ref_name }}"}' "$api")
+          wait_for "$api/operations/$publish"

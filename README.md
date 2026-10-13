@@ -223,16 +223,57 @@ Two more steps run only when their secrets are configured, and are skipped other
 |---|---|
 | Upload and publish the Chrome zip to the Chrome Web Store | `CWS_EXTENSION_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN` |
 | Sign the Firefox build on AMO (unlisted) and attach the `.xpi` to the release | `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` |
+| Upload the Chrome zip to Edge Add-ons and submit it for review | `EDGE_PRODUCT_ID`, `EDGE_CLIENT_ID`, `EDGE_API_KEY` |
 
-- **Chrome Web Store**: create the item once by hand in the developer dashboard (its id is
-  `CWS_EXTENSION_ID`), then follow Google's *Using the Chrome Web Store Publish API* guide: enable the Chrome
-  Web Store API in a Google Cloud project, create an OAuth client (`CWS_CLIENT_ID` / `CWS_CLIENT_SECRET`)
-  and exchange an authorization code for a refresh token (`CWS_REFRESH_TOKEN`).
-- **Firefox**: generate API credentials at
-  <https://addons.mozilla.org/developers/addon/api/key/>; the *JWT issuer* is `AMO_JWT_ISSUER` and the
-  *JWT secret* is `AMO_JWT_SECRET`.
+Set them with `gh secret set NAME` (or Settings → Secrets and variables → Actions). Every store needs the
+listing created once by hand; the workflow only ships new versions of an existing item.
 
-Edge Add-ons is not automated; upload the Chrome zip in Partner Center by hand.
+### Chrome Web Store secrets
+
+1. In the [developer dashboard](https://chrome.google.com/webstore/devconsole) create the item by uploading
+   `contapp-spv-chrome-<version>.zip`, fill in the listing and privacy tabs, choose *Unlisted* and submit it.
+   The 32-letter id shown on the item is `CWS_EXTENSION_ID`.
+2. In [Google Cloud Console](https://console.cloud.google.com/), with the **same Google account** that owns
+   the dashboard item: create a project, *APIs & Services → Library* → enable **Chrome Web Store API**.
+3. *APIs & Services → OAuth consent screen*: user type *External*, fill in the app name and emails, no scopes
+   needed, then **Publish app** (keep it in *Production*; in *Testing* status the refresh token expires after
+   7 days). The "unverified app" warning on the consent screen is expected and harmless here.
+4. *Credentials → Create credentials → OAuth client ID*, type **Desktop app**. Copy the client id and secret
+   (`CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`).
+5. Get the refresh token once: open this URL in the browser signed in as the owner account (replace
+   `CLIENT_ID`):
+   ```
+   https://accounts.google.com/o/oauth2/v2/auth?client_id=CLIENT_ID&redirect_uri=http://localhost:8818&response_type=code&scope=https://www.googleapis.com/auth/chromewebstore&access_type=offline&prompt=consent
+   ```
+   Approve; the browser is sent to `http://localhost:8818/?code=…` (the page fails to load, that is fine).
+   Copy the `code` value from the address bar and exchange it within a minute:
+   ```sh
+   curl -s https://oauth2.googleapis.com/token \
+     -d client_id=CLIENT_ID -d client_secret=CLIENT_SECRET \
+     -d code=CODE -d grant_type=authorization_code -d redirect_uri=http://localhost:8818
+   ```
+   The `refresh_token` in the answer is `CWS_REFRESH_TOKEN`. It stays valid until revoked.
+
+Edge users can also install directly from the Chrome Web Store page (Edge asks once to allow extensions
+from other stores), so the Edge listing below is optional.
+
+### Firefox (AMO) secrets
+
+1. Sign in at <https://addons.mozilla.org/developers/> with the account that will own the add-on.
+2. <https://addons.mozilla.org/developers/addon/api/key/> → **Generate new credentials**. The *JWT issuer*
+   is `AMO_JWT_ISSUER`, the *JWT secret* is `AMO_JWT_SECRET`.
+3. The first `web-ext sign` run creates the add-on (id `spv@contapp.ro`) on that account as unlisted /
+   self-distributed; nothing has to be created by hand. The signed `.xpi` lands on the GitHub release.
+
+### Edge Add-ons secrets
+
+1. Register at [Partner Center](https://partner.microsoft.com/dashboard/microsoftedge/overview) (free) and
+   create the extension by uploading `contapp-spv-chrome-<version>.zip`, fill in the listing, set visibility
+   *Hidden* (install only by link) and submit it. Once it exists, the overview URL contains the
+   **Product ID** (`EDGE_PRODUCT_ID`).
+2. Partner Center → **Publish API** → **Create API credentials**: copy the *Client ID* (`EDGE_CLIENT_ID`) and
+   the *API key* (`EDGE_API_KEY`). The key is shown once and expires after the chosen period (max 2 years);
+   generate a new one before it expires.
 
 ## Store checklist
 
@@ -240,7 +281,7 @@ Edge Add-ons is not automated; upload the Chrome zip in Partner Center by hand.
       [PRIVACY.md](PRIVACY.md) is the text.
 - [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for `tabs` and the
       `webserviced.anaf.ro` host permission.
-- [ ] Edge Add-ons submission (same package as Chrome).
+- [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.
 - [ ] Bump `version` in `manifest.json` (and `package.json`) for every published build.
