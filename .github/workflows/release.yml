@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+      CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the tag matches the manifest version
+        id: version
+        run: |
+          version=$(jq -r '.version' manifest.json)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: ./build.sh
+
+      - run: npm run lint
+
+      - name: Create GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip" \
+            "dist/contapp-spv-firefox-${{ steps.version.outputs.version }}.zip" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Publish to the Chrome Web Store
+        if: env.CWS_EXTENSION_ID != ''
+        env:
+          EXTENSION_ID: ${{ env.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ env.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ env.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ env.CWS_REFRESH_TOKEN }}
+        run: >-
+          npx --yes chrome-webstore-upload-cli@3 upload
+          --source "dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip"
+          --auto-publish
+
+      - name: Sign for Firefox (unlisted)
+        if: env.AMO_JWT_ISSUER != ''
+        run: |
+          npx web-ext sign --source-dir dist/firefox --channel unlisted \
+            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
+            --artifacts-dir dist/signed
+          gh release upload "$GITHUB_REF_NAME" dist/signed/*.xpi --clobber

@@ -1,0 +1,32 @@
+{
+    "manifest_version": 3,
+    "name": "contapp SPV",
+    "version": "1.0.0",
+    "description": "Permite contapp să citească mesajele din SPV ANAF folosind certificatul digital din browser.",
+    "host_permissions": ["https://webserviced.anaf.ro/*"],
+    "permissions": ["tabs"],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://*.contapp.ro/*",
+                "https://*.contapp.test/*",
+                "https://contapp.test/*"
+            ],
+            "js": ["content.js"],
+            "run_at": "document_start"
+        }
+    ],
+    "icons": {
+        "16": "icons/icon-16.png",
+        "48": "icons/icon-48.png",
+        "128": "icons/icon-128.png"
+    },
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "spv@contapp.ro"
+        }
+    }
+}

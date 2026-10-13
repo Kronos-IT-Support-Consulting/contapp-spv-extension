@@ -1,0 +1,18 @@
+{
+    "name": "contapp-spv-extension",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Browser extension that lets contapp read ANAF SPV messages with the certificate held by the browser.",
+    "license": "UNLICENSED",
+    "scripts": {
+        "build": "./build.sh",
+        "test": "node --test \"test/*.test.js\"",
+        "lint": "web-ext lint --source-dir dist/firefox --self-hosted"
+    },
+    "engines": {
+        "node": ">=22"
+    },
+    "devDependencies": {
+        "web-ext": "^10.7.0"
+    }
+}
