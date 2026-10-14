@@ -31,8 +31,9 @@ Extensia acționează numai când o pagină ContApp deschisă de dumneavoastră 
 2. extensia trimite cererea către ANAF, iar browserul și sistemul de operare fac autentificarea cu certificatul;
 3. extensia întoarce răspunsul ANAF (date JSON sau un fișier PDF), neschimbat, paginii ContApp care l-a cerut.
 
-Extensia refuză orice altă adresă. Nu face nimic din proprie inițiativă: componenta ei de fundal rulează numai cât timp
-răspunde unei cereri a paginii ContApp, nu verifică singură SPV, nu are pagină de setări și nu ia decizii automate.
+Extensia refuză orice altă adresă. Nu face nimic din proprie inițiativă: componenta ei de fundal rulează numai cât
+timp răspunde unei cereri a paginii ContApp, nu verifică singură SPV, nu are pagină de setări și nu ia decizii
+automate.
 
 ## 3. Ce date prelucrează, în ce scop și pe ce temei
 
@@ -52,8 +53,9 @@ răspunde unei cereri a paginii ContApp, nu verifică singură SPV, nu are pagin
 - **Istoric de navigare, conținutul altor site-uri, date de utilizare.** Extensia nu le accesează.
 
 Pentru datele contului dumneavoastră ContApp, Kronos IT Support & Consulting SRL este operator. Pentru datele din
-documentele SPV ale firmelor pe care le administrați, Kronos IT Support & Consulting SRL (ContApp) acționează ca persoană
-împuternicită, în numele dumneavoastră, conform capitolului XXII din [Termenii și condițiile](https://contapp.ro/termeni-si-conditii/).
+documentele SPV ale firmelor pe care le administrați, Kronos IT Support & Consulting SRL (ContApp) acționează ca
+persoană împuternicită, în numele dumneavoastră, conform capitolului XXII din
+[Termenii și condițiile](https://contapp.ro/termeni-si-conditii/).
 
 Folosirea extensiei este opțională. Fără ea, sincronizarea mesajelor SPV prin certificatul din browser nu este
 disponibilă, dar restul platformei ContApp funcționează.
@@ -105,7 +107,8 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](
 | Script de conținut pe `https://*.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
 
 Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa SPV, ca browserul să poată afișa alegerea
-certificatului și cererea de PIN; aceasta nu necesită o permisiune și extensia nu citește filele deschise.
+certificatului și cererea de PIN; deschiderea filei nu necesită nicio permisiune, iar extensia nu citește filele
+deschise.
 
 ## 9. Drepturile dumneavoastră
 
@@ -223,7 +226,7 @@ are described in the [ContApp privacy policy](https://contapp.ro/politica-de-con
 ## 6. How long data is kept
 
 - **The extension:** keeps nothing. ANAF's responses stay in browser memory only while being handed to the ContApp
-  page. The extension has no storage permission.
+  page. The extension has no `storage` permission.
 - **ContApp:** synced messages and documents stay in your account until you delete them or close the account, then
   for the periods in the [ContApp privacy policy](https://contapp.ro/politica-de-confidentialitate/), section
   "Perioada de stocare", or those required by law.
@@ -242,7 +245,7 @@ only accepts requests from ContApp pages and only for addresses in ANAF's SPV se
 | Content script on `https://*.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
 
 To authenticate at ANAF, the extension opens a new tab on the SPV address so the browser can show the certificate
-picker and the PIN prompt; this needs no permission and the extension does not read open tabs.
+picker and the PIN prompt; opening the tab needs no permission, and the extension does not read open tabs.
 
 ## 9. Your rights
 

@@ -10,7 +10,7 @@ All notable changes to this project are documented here. The format is based on
 
 - URLs are parsed and normalised before the SPV prefix check, so `…/SPVWS2/rest/../x` no longer reaches another
   path on the ANAF host; the request and the login tab use the normalised URL.
-- The `tabs` permission is gone: opening the login tab never needed it, and it made browsers warn about reading
+- The `tabs` permission is gone: opening the login tab never needed it, and it made Chrome warn about reading
   browsing history.
 - Release workflow: store secrets are scoped to the step that uses them, the Chrome Web Store uploader is a pinned
   dev dependency instead of an unpinned `npx` download, and a pushed `v*` tag is only released when its commit is
@@ -19,14 +19,15 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - The Firefox build declares `data_collection_permissions` as personally identifying and financial information
-  (the relayed SPV responses), which Firefox 140+ shows in the install prompt; Firefox 140 / Android 142 are the
-  minimum versions, Chrome 110.
+  (the relayed SPV responses), which Firefox 140+ shows in the install prompt; Firefox 140 and Chrome 110 are the
+  minimum versions.
 - A fetch now answers `network` (with a message) instead of `certificate_required` when the ANAF host permission
   has been revoked, and when the response is too large to hand to the page (above 47 MiB).
 - The service worker keeps itself alive while an SPV response is pending, so a slow download no longer dies with
   Chrome's idle timeout.
 - Release workflow: one release at a time; a re-run after a partial failure reuses the version and refreshes the
-  assets instead of bumping again; the Edge Add-ons step fails fast on API errors.
+  assets instead of bumping again; every configured store is attempted even when another one fails; the Edge
+  Add-ons step reports API errors instead of waiting them out.
 - Store zips contain only the PNG icons the manifest references.
 - Privacy policy and store texts: cookies, background behaviour, data categories and the processor's legal entity
   are stated as they are; rights and the ANSPDCP address follow the official wording.

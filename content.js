@@ -24,11 +24,15 @@ async function relay(type, url) {
     try {
         const response = await chrome.runtime.sendMessage({ type, url });
 
-        if (response?.ok && typeof response.body === "string") {
+        if (typeof response !== "object" || response === null) {
+            return { ok: false, error: "extension" };
+        }
+
+        if (response.ok && typeof response.body === "string") {
             return { ...response, body: fromBase64(response.body) };
         }
 
-        return response || { ok: false, error: "extension" };
+        return response;
     } catch (error) {
         console.debug("ContApp SPV extension unreachable", error);
 

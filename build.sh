@@ -19,7 +19,7 @@ production='.content_scripts[].matches |= map(select(test("\\.test/") | not))'
 
 # The SPV replies the extension hands to the ContApp page carry the certificate holder's CNP, CUIs and tax
 # documents, which ContApp then stores: Firefox shows that as data collection in its install prompt (Firefox 140+).
-firefox='.background = {scripts: ["background.js"]}
+firefox='.background = {scripts: ["background.js"]} | del(.minimum_chrome_version)
     | .browser_specific_settings.gecko.data_collection_permissions = {required: ["personallyIdentifyingInfo", "financialAndPaymentInfo"]}'
 
 jq "$production | del(.browser_specific_settings)" manifest.json > dist/chrome/manifest.json

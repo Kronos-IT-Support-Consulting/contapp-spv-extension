@@ -68,8 +68,13 @@ The declaration lists *personally identifying* and *financial* information: the 
 but the SPV responses it relays carry the certificate holder's CNP, CUIs and tax documents, which the ContApp page
 then stores in the user's account, and Mozilla counts data handed outside the add-on as collection. Firefox 140+
 shows this in the install prompt, hence `strict_min_version: "140.0"`. Firefox also lets the user revoke the ANAF
-host permission at any time (*about:addons* → ContApp SPV → *Permissions*); the extension then answers `network`
-with the message `permission for https://webserviced.anaf.ro/* is not granted`.
+host permission at any time (*about:addons* → ContApp SPV → the permissions tab); the extension then answers
+`network` with the message `permission for https://webserviced.anaf.ro/* is not granted`. The manifest declares no
+`gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
+advisory warning about the Android minimum version, which is expected.
+
+Chrome and Edge need version 110 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
+service worker's idle timer, which is how the worker stays alive while an SPV response is pending.
 
 ## Protocol
 
@@ -242,8 +247,10 @@ git push origin v1.2.3`); the workflow releases that tag.
 Either way the tag is the version: the workflow stamps it into `manifest.json` before building, so the version in
 the repository's `manifest.json` is never bumped by hand (it only matters for load-unpacked development). The
 workflow then runs the tests, builds, lints, and creates the GitHub Release with both zips and notes generated
-from the merged pull requests. Creating a release needs write access to the repository; once created, `v*` tags
-cannot be moved or deleted (ruleset *Release tags*).
+from the merged pull requests. Creating a release needs write access to the repository; a pushed tag is only
+released when its commit is on `main`, and once created, `v*` tags cannot be moved or deleted (ruleset *Release
+tags*). Re-running the workflow on a commit that is already released refreshes that release's assets instead of
+bumping again; a store that already holds the version will then refuse it, which the last step reports.
 
 Three more steps run only when their secrets are configured, and are skipped otherwise:
 

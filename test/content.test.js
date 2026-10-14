@@ -146,12 +146,14 @@ test("matches concurrent replies to their requests in completion order", async (
     assert.deepEqual(posted.map((p) => [p.data.id, Buffer.from(p.data.body).toString()]), [["second", "two"], ["first", "one"]]);
 });
 
-test("answers extension when the service worker is unreachable, silent or sends an undecodable body", async () => {
+test("answers extension when the service worker is unreachable, silent, not an object or sends an undecodable body", async () => {
     const workers = [
         () => { throw new Error("Extension context invalidated."); },
         () => undefined,
         () => null,
         () => "",
+        () => "ok",
+        () => 7,
         () => ({ ok: true, status: 200, url: request.url, body: "@@not base64@@" }),
     ];
 

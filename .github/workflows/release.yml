@@ -41,9 +41,11 @@ jobs:
 
       - name: A pushed tag must point at a commit on main
         if: github.event_name == 'push'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME is not on main; releases are cut from reviewed commits only."
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::$GITHUB_REF_NAME is not on $DEFAULT_BRANCH; releases are cut from reviewed commits only."
             exit 1
           fi
 
@@ -67,6 +69,7 @@ jobs:
             fi
             if [ "$(git rev-list -n 1 "$last")" = "$GITHUB_SHA" ]; then
               # A re-run after a partial failure: this commit is already released under $last.
+              echo "::warning::$GITHUB_SHA is already released as $last; refreshing that release (bump=$BUMP ignored)."
               version="${last#v}"
             else
               IFS=. read -r major minor patch <<< "${last#v}"
@@ -113,8 +116,12 @@ jobs:
             gh release create "$TAG" "${zips[@]}" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
           fi
 
+      # The three store steps all run even when one fails (a store that already has this version refuses it on a
+      # re-run); the last step turns any failure into a red job.
       - name: Publish to the Chrome Web Store
+        id: cws
         if: env.HAS_CWS == 'true'
+        continue-on-error: true
         env:
           VERSION: ${{ steps.version.outputs.version }}
           EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
@@ -122,10 +129,13 @@ jobs:
           CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
         # chrome-webstore-upload-cli is a pinned devDependency, so npm ci already installed it from the lockfile.
-        run: npx --no-install chrome-webstore-upload upload --source "dist/contapp-spv-chrome-$VERSION.zip" --auto-publish
+        # Without a subcommand it uploads and publishes.
+        run: npx --no-install chrome-webstore-upload --source "dist/contapp-spv-chrome-$VERSION.zip"
 
       - name: Sign for Firefox (unlisted)
+        id: amo
         if: env.HAS_AMO == 'true'
+        continue-on-error: true
         env:
           TAG: ${{ steps.version.outputs.tag }}
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
@@ -135,7 +145,9 @@ jobs:
           gh release upload "$TAG" dist/signed/*.xpi --clobber
 
       - name: Publish to Edge Add-ons
+        id: edge
         if: env.HAS_EDGE == 'true'
+        continue-on-error: true
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
@@ -146,24 +158,33 @@ jobs:
         run: |
           api="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID/submissions"
           auth=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
+          tmp=$(mktemp -d)
 
-          # Starts an operation; prints the operation id from the Location header, or the error body.
+          # Starts an operation and prints the operation id from the Location header. Diagnostics go to stderr:
+          # stdout is captured by the caller.
           operation() {
-            if ! curl -sS --fail-with-body "${auth[@]}" -D headers.txt -o body.txt "$@"; then
-              cat body.txt; echo
-              echo "::error::Edge request failed"
+            if ! curl -sS --fail-with-body "${auth[@]}" -D "$tmp/headers" -o "$tmp/body" "$@"; then
+              { cat "$tmp/body"; echo; echo "::error::Edge request failed"; } >&2
               return 1
             fi
-            awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n] }' headers.txt
+            awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n] }' "$tmp/headers"
           }
 
           wait_for() {
+            failed_polls=0
             for _ in $(seq 1 60); do
-              status=$(curl -sS --fail-with-body "${auth[@]}" "$1" | jq -r '.status')
+              if ! body=$(curl -sS --fail-with-body "${auth[@]}" "$1"); then
+                # Edge documents 429 and 500 as transient; give up only when they persist.
+                failed_polls=$((failed_polls + 1))
+                [ "$failed_polls" -lt 3 ] || { echo "::error::Polling $1 keeps failing"; return 1; }
+                sleep 10
+                continue
+              fi
+              status=$(jq -r '.status' <<< "$body")
               case "$status" in
                 Succeeded) return 0 ;;
                 InProgress) sleep 10 ;;
-                *) curl -sS "${auth[@]}" "$1"; echo; echo "::error::Edge operation ended with status '$status'"; return 1 ;;
+                *) echo "$body"; echo "::error::Edge operation ended with status '$status'"; return 1 ;;
               esac
             done
             echo "::error::Timed out waiting for $1"
@@ -178,3 +199,14 @@ jobs:
           publish=$(operation -X POST -H "Content-Type: application/json" -d "{\"notes\":\"Release $TAG\"}" "$api")
           [ -n "$publish" ] || { echo "::error::No operation id for the publish request"; exit 1; }
           wait_for "$api/operations/$publish"
+
+      - name: Every configured store took the release
+        if: always()
+        env:
+          RESULTS: cws=${{ steps.cws.outcome }} amo=${{ steps.amo.outcome }} edge=${{ steps.edge.outcome }}
+        run: |
+          echo "$RESULTS"
+          if [[ "$RESULTS" == *failure* ]]; then
+            echo "::error::A store step failed: $RESULTS"
+            exit 1
+          fi
