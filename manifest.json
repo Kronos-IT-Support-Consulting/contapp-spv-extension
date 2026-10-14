@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "contapp SPV",
+    "name": "ContApp SPV",
     "version": "1.0.0",
-    "description": "Permite contapp să citească mesajele din SPV ANAF folosind certificatul digital din browser.",
+    "description": "Permite ContApp să citească mesajele din SPV ANAF folosind certificatul digital din browser.",
     "host_permissions": ["https://webserviced.anaf.ro/*"],
     "permissions": ["tabs"],
     "background": {
