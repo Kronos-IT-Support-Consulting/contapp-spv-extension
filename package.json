@@ -2,7 +2,7 @@
     "name": "contapp-spv-extension",
     "version": "1.0.0",
     "private": true,
-    "description": "Browser extension that lets contapp read ANAF SPV messages with the certificate held by the browser.",
+    "description": "Browser extension that lets ContApp read ANAF SPV messages with the certificate held by the browser.",
     "license": "MIT",
     "scripts": {
         "build": "./build.sh",
@@ -13,6 +13,7 @@
         "node": ">=22"
     },
     "devDependencies": {
+        "chrome-webstore-upload-cli": "3.5.0",
         "web-ext": "^10.7.0"
     },
     "overrides": {

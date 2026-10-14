@@ -1,8 +1,27 @@
 const ALLOWED_PREFIX = "https://webserviced.anaf.ro/SPVWS2/rest/";
+const HOST_PERMISSION = { origins: ["https://webserviced.anaf.ro/*"] };
 const CHUNK_SIZE = 0x8000;
+// Chrome refuses runtime messages over 64 MiB; base64 adds a third, the reply envelope a few bytes.
+const MAX_BODY_BYTES = 47 * 1024 * 1024;
+// Chrome stops an idle MV3 service worker after 30 s. A pending fetch is not activity, an API call is.
+const KEEP_ALIVE_MS = 25_000;
 
-function isAllowed(url) {
-    return typeof url === "string" && url.startsWith(ALLOWED_PREFIX);
+// The normalised href when the URL is under the SPV REST API, otherwise null. Normalising first means
+// the check runs on what fetch would actually request: "rest/../admin" resolves out of the prefix.
+function allowedUrl(url) {
+    if (typeof url !== "string") {
+        return null;
+    }
+
+    let href;
+
+    try {
+        ({ href } = new URL(url));
+    } catch {
+        return null; // not a URL at all
+    }
+
+    return href.startsWith(ALLOWED_PREFIX) ? href : null;
 }
 
 function toBase64(buffer) {
@@ -16,7 +35,17 @@ function toBase64(buffer) {
     return btoa(binary);
 }
 
-async function proxyFetch(url) {
+function networkError(reason) {
+    return { ok: false, error: "network", message: String(reason?.message ?? reason) };
+}
+
+function keepAlive() {
+    const timer = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), KEEP_ALIVE_MS);
+
+    return () => clearInterval(timer);
+}
+
+async function fetchBody(url) {
     let response;
 
     try {
@@ -27,19 +56,39 @@ async function proxyFetch(url) {
             return { ok: false, error: "certificate_required" };
         }
 
-        console.debug("contapp SPV fetch failed", error);
+        console.debug("ContApp SPV fetch failed", error);
 
-        return { ok: false, error: "network", message: String(error?.message ?? error) };
+        return networkError(error);
     }
 
     try {
-        const body = toBase64(await response.arrayBuffer());
+        const buffer = await response.arrayBuffer();
 
-        return { ok: true, status: response.status, url: response.url, body };
+        if (buffer.byteLength > MAX_BODY_BYTES) {
+            return networkError(`response of ${buffer.byteLength} bytes is too large to pass to the page`);
+        }
+
+        return { ok: true, status: response.status, url: response.url, body: toBase64(buffer) };
     } catch (error) {
-        console.debug("contapp SPV body read failed", error);
+        console.debug("ContApp SPV body read failed", error);
 
-        return { ok: false, error: "network", message: String(error?.message ?? error) };
+        return networkError(error);
+    }
+}
+
+async function proxyFetch(url) {
+    // MV3 host permissions are optional in Firefox, and Chrome withholds them under "on click" site access.
+    // Without the grant, fetch fails with the same TypeError as a missing certificate.
+    if (!(await chrome.permissions.contains(HOST_PERMISSION))) {
+        return networkError(`permission for ${HOST_PERMISSION.origins[0]} is not granted`);
+    }
+
+    const stopKeepAlive = keepAlive();
+
+    try {
+        return await fetchBody(url);
+    } finally {
+        stopKeepAlive();
     }
 }
 
@@ -50,13 +99,15 @@ async function openLogin(url) {
 }
 
 async function handle(message) {
+    const url = allowedUrl(message?.url);
+
     switch (message?.type) {
         case "ping":
             return { ok: true, version: chrome.runtime.getManifest().version };
         case "fetch":
-            return isAllowed(message.url) ? proxyFetch(message.url) : { ok: false, error: "forbidden_url" };
+            return url ? proxyFetch(url) : { ok: false, error: "forbidden_url" };
         case "login":
-            return isAllowed(message.url) ? openLogin(message.url) : { ok: false, error: "forbidden_url" };
+            return url ? openLogin(url) : { ok: false, error: "forbidden_url" };
         default:
             return { ok: false, error: "unknown_type" };
     }
@@ -64,8 +115,8 @@ async function handle(message) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handle(message).then(sendResponse, (error) => {
-        console.debug("contapp SPV handler failed", error);
-        sendResponse({ ok: false, error: "network", message: String(error?.message ?? error) });
+        console.debug("ContApp SPV handler failed", error);
+        sendResponse(networkError(error));
     });
 
     return true;

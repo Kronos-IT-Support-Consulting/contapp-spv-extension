@@ -21,7 +21,9 @@ Placeholder still to fill: the support URL marked *(placeholder)*.
 ### Short description
 
 Chrome shows the manifest `description` as the summary (limit 132 characters), so the Romanian text is exactly the
-one in `manifest.json`. Change both together.
+one in `manifest.json`. Change both together. Chrome only offers a listing in the locales present in a `_locales/`
+directory, and the extension ships none, so on the Chrome Web Store the EN texts below cannot be entered; they are for
+Edge Partner Center (which has its own per-language fields) and for AMO if a listing is ever created.
 
 RO (92 characters):
 
@@ -51,9 +53,9 @@ Pentru cine este
 Pentru clienții ContApp (firme și contabili) care au un certificat digital cu acces la SPV. Aveți nevoie de un cont ContApp și de certificat pe calculatorul respectiv, cu programul tokenului sau al semnăturii în cloud instalat. Fără un cont ContApp, extensia nu are nicio utilitate.
 
 Ce nu face
-• Nu vede PIN-ul și nu are acces la cheia privată: PIN-ul este cerut de sistemul de operare.
+• Nu vede PIN-ul și nu are acces la cheia privată: PIN-ul este cerut de programul tokenului sau de sistemul de operare.
 • Nu stochează nimic și nu are pagină de setări.
-• Nu rulează în fundal și nu verifică singură SPV; acționează doar când o pagină ContApp îi cere.
+• Nu face nimic din proprie inițiativă: nu verifică singură SPV și acționează doar când o pagină ContApp îi cere.
 • Nu accesează alte site-uri decât serviciul SPV al ANAF și paginile ContApp.
 • Nu folosește analiză de trafic, reclame sau cod încărcat de pe internet.
 
@@ -79,9 +81,9 @@ Who it is for
 ContApp customers (businesses and accountants) who hold a digital certificate with SPV access. You need a ContApp account and the certificate on that computer, with the token or cloud-signature software installed. Without a ContApp account the extension does nothing useful.
 
 What it does not do
-• It never sees the PIN and has no access to the private key: the PIN is asked by the operating system.
+• It never sees the PIN and has no access to the private key: the PIN is asked by the token software or the operating system.
 • It stores nothing and has no settings page.
-• It does not run in the background or check SPV on its own; it only acts when a ContApp page asks.
+• It does nothing on its own initiative: it does not check SPV on its own and only acts when a ContApp page asks.
 • It does not access any site other than ANAF's SPV service and ContApp pages.
 • It uses no analytics, no advertising and no code loaded from the internet.
 
@@ -98,7 +100,7 @@ Support: suport@contapp.ro
 RO:
 
 ```
-Extensia are un singur scop: permite aplicației ContApp să citească serviciul SPV al ANAF (https://webserviced.anaf.ro/SPVWS2/rest/) folosind certificatul digital calificat al utilizatorului. O pagină ContApp deschisă de utilizator îi cere o adresă SPV (lista mesajelor, descărcarea unui mesaj, o cerere de document); extensia face cererea, browserul realizează autentificarea TLS mutuală cu certificatul, iar extensia întoarce răspunsul ANAF, neschimbat, paginii ContApp. Extensia refuză orice altă adresă, nu stochează date și acționează numai la cererea paginii ContApp.
+Extensia are un singur scop: permite aplicației ContApp să citească serviciul SPV al ANAF (https://webserviced.anaf.ro/SPVWS2/rest/) folosind certificatul digital calificat al utilizatorului. O pagină ContApp deschisă de utilizator îi cere o adresă SPV (lista mesajelor, descărcarea unui mesaj, o cerere de document); extensia face cererea, browserul realizează autentificarea TLS reciprocă (mutual TLS) cu certificatul, iar extensia întoarce răspunsul ANAF, neschimbat, paginii ContApp. Extensia refuză orice altă adresă, nu stochează date și acționează numai la cererea paginii ContApp.
 ```
 
 EN:
@@ -109,10 +111,11 @@ The extension has a single purpose: it lets the ContApp application read ANAF's 
 
 ### Permission justifications
 
-`tabs`:
+The manifest declares no API permission. Opening the ANAF login tab (`chrome.tabs.create`) needs none; if a form
+asks why the extension opens tabs:
 
 ```
-Used only to open a new tab on the ANAF SPV address (chrome.tabs.create) when the user clicks "Autentificare ANAF" in ContApp. A request made by the service worker cannot show the browser's client-certificate picker or the token's PIN prompt; a visible tab can. After the user picks the certificate in that tab, the browser can reuse it for the extension's requests. The extension does not query or read any tab.
+When the user clicks "Autentificare ANAF" in ContApp, the extension opens the ANAF SPV address in a new tab (chrome.tabs.create, which needs no permission). A request made by the service worker cannot show the browser's client-certificate picker or the token's PIN prompt; a visible tab can. After the user picks the certificate in that tab, the browser can reuse it for the extension's requests. The extension does not query or read any tab.
 ```
 
 Host permission `https://webserviced.anaf.ro/*`:
@@ -121,10 +124,10 @@ Host permission `https://webserviced.anaf.ro/*`:
 ANAF's SPV web service only answers over mutual TLS and sends no CORS headers, so a web page cannot read its responses. The service worker fetches the SPV URL the ContApp page asked for, with credentials included, so the browser performs the client-certificate handshake. The code accepts only URLs starting with https://webserviced.anaf.ro/SPVWS2/rest/ and rejects everything else.
 ```
 
-Content script on `https://*.contapp.ro/*` (and `contapp.test`, a local development host):
+Content script on `https://*.contapp.ro/*`:
 
 ```
-The content script is the bridge between the ContApp page and the service worker: it receives the page's requests through window.postMessage (same origin only), forwards them to the service worker and posts the answer back. It also marks the page (data-spv-extension attribute) so ContApp knows the extension is installed. It runs only on ContApp domains; contapp.test is a local development host that does not exist on the internet.
+The content script is the bridge between the ContApp page and the service worker: it receives the page's requests through window.postMessage (same origin only), forwards them to the service worker and posts the answer back. It also marks the page (data-spv-extension attribute) so ContApp knows the extension is installed. It runs only on ContApp domains.
 ```
 
 Remote code: **No, I am not using remote code.**
@@ -135,15 +138,16 @@ All code ships in the package (background.js, content.js); nothing is downloaded
 
 ### Data usage
 
-Categories collected: **none ticked** (Personally identifiable information, Health information, Financial and payment
-information, Authentication information, Personal communications, Location, Web history, User activity, Website
-content: all unticked).
+Categories collected: tick **Personally identifiable information** and **Financial and payment information**; leave
+Health information, Authentication information, Personal communications, Location, Web history, User activity and
+Website content unticked.
 
-Reasoning, in case the reviewer asks: the extension stores nothing and sends nothing to its publisher. It relays
-ANAF's response to the ContApp page the user opened; that page (not the extension) sends it to ContApp's server
-under the user's own account, as the ContApp application already does for everything else. If the reviewer
-considers that relay to be collection by the extension, the honest categories would be *Personally identifiable
-information* and *Financial and payment information* (SPV messages contain tax IDs and tax documents).
+Reasoning: Chrome counts transmitting and sharing as handling user data and requires the disclosure to match the
+privacy policy, which lists the certificate holder's CNP, CUIs and tax documents. The extension stores nothing and
+sends nothing to its publisher directly, but it relays ANAF's response to the ContApp page the user opened, and that
+page sends it to ContApp's server under the user's own account. The certificate, PIN and ANAF cookies are never read,
+so *Authentication information* stays unticked. The Firefox build declares the same two categories in
+`data_collection_permissions` (see `build.sh`).
 
 Certifications, all three ticked:
 
@@ -159,9 +163,9 @@ Privacy policy URL: `https://kronos-it-support-consulting.github.io/contapp-spv-
 ContApp SPV is a companion extension for ContApp (https://contapp.ro), an online accounting application for Romanian businesses and accountants. It is distributed unlisted and installed from inside the ContApp app.
 
 Testing it end to end needs two things a reviewer normally does not have: a ContApp account and a Romanian qualified digital certificate with access to ANAF's SPV (Spațiul Privat Virtual) on a USB token or cloud HSM. The flow is:
-1. In ContApp, the SPV certificate page detects the extension (the content script sets <html data-spv-extension="1.0.0">).
+1. In ContApp, the SPV certificate page detects the extension (the content script sets <html data-spv-extension="<version>">).
 2. ContApp asks the extension, via window.postMessage, to fetch https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60. The service worker fetches it with credentials; the first time, the request fails because no certificate has been chosen yet.
-3. The user clicks "Autentificare ANAF"; the extension opens that ANAF URL in a new tab (tabs permission), the browser shows the certificate picker and the token asks for its PIN.
+3. The user clicks "Autentificare ANAF"; the extension opens that ANAF URL in a new tab (chrome.tabs.create, no extra permission), the browser shows the certificate picker and the token asks for its PIN.
 4. Back in ContApp, the same fetch now succeeds; the extension returns the JSON (or, for descarcare?id=..., the PDF bytes) to the ContApp page.
 
 Without a certificate you can still check: on any https://*.contapp.ro page, the extension answers a {channel:"contapp-spv", type:"ping"} message with its version, rejects any URL outside https://webserviced.anaf.ro/SPVWS2/rest/ with "forbidden_url", and a fetch of an SPV URL returns "certificate_required". The source is two short files, background.js and content.js.
@@ -183,7 +187,7 @@ Same package as Chrome (`contapp-spv-chrome-<version>.zip`). Fields Partner Cent
 | Properties | Support contact | `suport@contapp.ro` (or the support URL above) |
 | Properties | Mature content | No |
 | Store listing (Romanian; add English as a second language) | Description | Detailed description above (Edge requires at least 250 characters) |
-| Store listing | Short description | Short description above |
+| Store listing | Short description | Read-only: Edge takes it from the manifest `description` |
 | Store listing | Extension logo | `store/icon-512.png` (Edge asks for 1:1, 128×128 minimum; 300×300 recommended) |
 | Store listing | Screenshots | `store/screenshots/*.png`, 1280×800 |
 | Store listing | Small / large promotional tile, YouTube video | Leave empty |
@@ -198,9 +202,9 @@ unlisted / self-distributed, with no listing page.
 If AMO asks for review notes or source code:
 
 ```
-ContApp SPV is a companion extension for ContApp (https://contapp.ro), a Romanian online accounting application. It relays requests from ContApp pages to ANAF's SPV web service (https://webserviced.anaf.ro/SPVWS2/rest/) so the browser can authenticate with the user's client certificate, and returns the raw response to the ContApp page. It stores nothing and collects no data (data_collection_permissions: none).
+ContApp SPV is a companion extension for ContApp (https://contapp.ro), a Romanian online accounting application. It relays requests from ContApp pages to ANAF's SPV web service (https://webserviced.anaf.ro/SPVWS2/rest/) so the browser can authenticate with the user's client certificate, and returns the raw response to the ContApp page. It stores nothing itself; because the relayed SPV responses carry the certificate holder's CNP, CUIs and tax documents, which the ContApp page then stores in the user's account, the manifest declares data_collection_permissions.required = [personallyIdentifyingInfo, financialAndPaymentInfo] (Firefox 140+ shows this in the install prompt).
 
-Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js and icons/ into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration). To reproduce: ./build.sh (requires jq and zip).
+Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js and the PNG icons into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration). To reproduce: ./build.sh (requires jq and zip).
 
 Testing end to end needs a ContApp account and a Romanian qualified certificate with SPV access; a screencast is available on request at suport@contapp.ro.
 ```
@@ -208,14 +212,14 @@ Testing end to end needs a ContApp account and a Romanian qualified certificate 
 ## Assets checklist
 
 - [x] Icon 128×128: `icons/icon-128.png`
-- [ ] Screenshots 1280×800 in `store/screenshots/`:
+- [x] Screenshots 1280×800 in `store/screenshots/`:
 
   | File | Caption (RO) |
   |---|---|
   | `01-mesaje-spv.png` | Mesajele SPV ale firmei, listate în ContApp. |
   | `02-sincronizare.png` | Sincronizarea mesajelor SPV dintr-un singur clic. |
   | `03-cerere-noua.png` | Cerere nouă de document către ANAF, trimisă din ContApp. |
-  | `04-certificat.png` | Certificatul SPV verificat: CNP titular și CUI-urile cu acces. |
+  | `04-certificat.png` | Certificatul SPV verificat: CNP titular și CUI-urile la care are acces. |
   | `05-autentificare-anaf.png` | Autentificarea la ANAF: browserul cere certificatul, iar tokenul cere PIN-ul. |
   | `06-instalare.png` | Instalarea extensiei din ContApp. |
 

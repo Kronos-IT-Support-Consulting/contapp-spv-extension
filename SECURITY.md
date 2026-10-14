@@ -2,12 +2,13 @@
 
 ## Supported versions
 
-Only the latest release on the Chrome Web Store / Edge Add-ons / the GitHub Releases page receives fixes.
-Browsers update installed copies automatically within hours of a store release.
+Only the latest GitHub release (and, once the store listings exist, the latest store version) receives fixes.
+Store-installed copies update automatically within hours of a release; copies loaded unpacked from a release zip
+must be downloaded again.
 
 ## Reporting a vulnerability
 
-E-mail **suport@contapp.ro** with the subject `[contapp SPV extension] security`. Include the browser and
+E-mail **suport@contapp.ro** with the subject `[ContApp SPV extension] security`. Include the browser and
 extension version (`chrome://extensions`), what you did, what happened and, if you have one, a proof of concept.
 Please do not open a public issue for security problems.
 

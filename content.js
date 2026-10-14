@@ -1,6 +1,11 @@
 const CHANNEL = "contapp-spv";
 
-document.documentElement.dataset.spvExtension = chrome.runtime.getManifest().version;
+// A sandboxed document has the opaque origin "null": the origin check below would pass for anyone and
+// postMessage would refuse "null" as a target. Such a page gets no bridge.
+if (location.origin !== "null") {
+    document.documentElement.dataset.spvExtension = chrome.runtime.getManifest().version;
+    window.addEventListener("message", onMessage);
+}
 
 function fromBase64(base64) {
     const binary = atob(base64);
@@ -13,13 +18,35 @@ function fromBase64(base64) {
     return bytes.buffer;
 }
 
+// Whatever goes wrong between here and the service worker (extension reloaded, no answer, an answer
+// that cannot be decoded) looks the same to the page: "extension".
+async function relay(type, url) {
+    try {
+        const response = await chrome.runtime.sendMessage({ type, url });
+
+        if (typeof response !== "object" || response === null) {
+            return { ok: false, error: "extension" };
+        }
+
+        if (response.ok && typeof response.body === "string") {
+            return { ...response, body: fromBase64(response.body) };
+        }
+
+        return response;
+    } catch (error) {
+        console.debug("ContApp SPV extension unreachable", error);
+
+        return { ok: false, error: "extension" };
+    }
+}
+
 function reply(id, payload) {
     const transfer = payload.body instanceof ArrayBuffer ? [payload.body] : [];
 
     window.postMessage({ ...payload, channel: CHANNEL, direction: "reply", id }, location.origin, transfer);
 }
 
-window.addEventListener("message", async (event) => {
+async function onMessage(event) {
     const data = event.data;
 
     if (event.source !== window || event.origin !== location.origin) {
@@ -30,26 +57,5 @@ window.addEventListener("message", async (event) => {
         return;
     }
 
-    let response;
-
-    try {
-        response = await chrome.runtime.sendMessage({ type: data.type, url: data.url });
-    } catch (error) {
-        console.debug("contapp SPV extension unreachable", error);
-        reply(data.id, { ok: false, error: "extension" });
-
-        return;
-    }
-
-    if (!response) {
-        reply(data.id, { ok: false, error: "extension" });
-
-        return;
-    }
-
-    if (response.ok && typeof response.body === "string") {
-        response = { ...response, body: fromBase64(response.body) };
-    }
-
-    reply(data.id, response);
-});
+    reply(data.id, await relay(data.type, data.url));
+}

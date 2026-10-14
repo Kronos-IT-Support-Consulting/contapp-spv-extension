@@ -12,7 +12,7 @@ aveți, conform art. 13 din Regulamentul (UE) 2016/679 (GDPR). Ea completează
 
 Extensia este publicată de **Kronos IT Support & Consulting SRL**, operatorul platformei [ContApp](https://contapp.ro):
 
-- sediul social: Loc. Tifești, Județul Vrancea, Str. Secundară 58, nr. 24, cod 627375, România;
+- sediul social: Loc. Tifești, județul Vrancea, Str. Secundară 58, nr. 24, cod poștal 627375, România;
 - Registrul Comerțului: J39/10237/2006, CUI 18256126;
 - e-mail: [contact@contapp.ro](mailto:contact@contapp.ro), telefon: +40 791 512 012;
 - responsabil cu protecția datelor (DPO): [dpo@contapp.ro](mailto:dpo@contapp.ro).
@@ -31,14 +31,15 @@ Extensia acționează numai când o pagină ContApp deschisă de dumneavoastră 
 2. extensia trimite cererea către ANAF, iar browserul și sistemul de operare fac autentificarea cu certificatul;
 3. extensia întoarce răspunsul ANAF (date JSON sau un fișier PDF), neschimbat, paginii ContApp care l-a cerut.
 
-Extensia refuză orice altă adresă. Nu rulează în fundal, nu verifică singură SPV, nu are pagină de setări și nu ia
-decizii automate.
+Extensia refuză orice altă adresă. Nu face nimic din proprie inițiativă: componenta ei de fundal rulează numai cât
+timp răspunde unei cereri a paginii ContApp, nu verifică singură SPV, nu are pagină de setări și nu ia decizii
+automate.
 
 ## 3. Ce date prelucrează, în ce scop și pe ce temei
 
 | Date | Scop | Temei legal |
 |---|---|---|
-| Răspunsurile SPV: lista mesajelor (id, tip, dată, CIF, detalii, CNP-ul titularului certificatului, CUI-urile la care are acces) și documentele descărcate, care pot conține date personale și fiscale | Afișarea și păstrarea mesajelor și documentelor SPV în contul dumneavoastră ContApp, la cererea dumneavoastră | Executarea contractului de utilizare a platformei ContApp (art. 6 alin. (1) lit. b) GDPR) |
+| Răspunsurile SPV: lista mesajelor (id, tip, dată, CIF, detalii, CNP-ul titularului certificatului, seria certificatului, CUI-urile la care are acces) și documentele descărcate, care pot conține date personale și fiscale | Afișarea și păstrarea mesajelor și documentelor SPV în contul dumneavoastră ContApp, la cererea dumneavoastră | Executarea contractului de utilizare a platformei ContApp (art. 6 alin. (1) lit. b) GDPR) |
 | Parametrii cererilor de documente (tip, CUI, an, lună, motiv) | Transmiterea către ANAF a cererii completate în ContApp | Executarea contractului (art. 6 alin. (1) lit. b) GDPR) |
 
 **Ce nu prelucrează extensia:**
@@ -46,13 +47,15 @@ decizii automate.
 - **Certificatul și PIN-ul.** Alegerea certificatului și introducerea PIN-ului sunt gestionate de browser, de
   sistemul de operare și de programul tokenului sau al semnăturii în cloud. Extensia nu vede PIN-ul și nu are acces
   la cheia privată.
-- **Cookie-uri.** Extensia nu setează, nu citește și nu salvează cookie-uri. După autentificare, browserul
-  păstrează cookie-ul de sesiune setat de ANAF, ca la orice site.
+- **Cookie-uri.** Extensia nu citește și nu salvează cookie-uri. Cererile pe care le trimite către ANAF includ însă
+  cookie-urile pe care browserul le are deja pentru `webserviced.anaf.ro` (cookie-ul de sesiune setat de ANAF după
+  autentificare), la fel ca orice cerere făcută din browser.
 - **Istoric de navigare, conținutul altor site-uri, date de utilizare.** Extensia nu le accesează.
 
 Pentru datele contului dumneavoastră ContApp, Kronos IT Support & Consulting SRL este operator. Pentru datele din
-documentele SPV ale firmelor pe care le administrați, ContApp acționează ca persoană împuternicită, în numele
-dumneavoastră, conform capitolului XXII din [Termeni și condiții](https://contapp.ro/termeni-si-conditii/).
+documentele SPV ale firmelor pe care le administrați, Kronos IT Support & Consulting SRL (ContApp) acționează ca
+persoană împuternicită, în numele dumneavoastră, conform capitolului XXII din
+[Termenii și condițiile](https://contapp.ro/termeni-si-conditii/).
 
 Folosirea extensiei este opțională. Fără ea, sincronizarea mesajelor SPV prin certificatul din browser nu este
 disponibilă, dar restul platformei ContApp funcționează.
@@ -84,7 +87,7 @@ contractuale standard) sunt descrise în
 ## 6. Cât timp păstrăm datele
 
 - **Extensia:** nu păstrează nimic. Răspunsurile ANAF stau în memoria browserului doar cât durează transferul către
-  pagina ContApp. Extensia nu are permisiunea de stocare.
+  pagina ContApp. Extensia nu are permisiunea `storage`.
 - **ContApp:** mesajele și documentele sincronizate rămân în contul dumneavoastră până le ștergeți sau până la
   închiderea contului, apoi conform perioadelor din
   [Politica de confidențialitate ContApp](https://contapp.ro/politica-de-confidentialitate/), secțiunea
@@ -100,14 +103,17 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](
 
 | Permisiune | De ce |
 |---|---|
-| `tabs` | Deschide o filă nouă pe adresa SPV a ANAF, ca browserul să poată afișa alegerea certificatului și cererea de PIN. Extensia nu citește filele deschise. |
 | Acces la `https://webserviced.anaf.ro/*` | Citește răspunsurile serviciului SPV al ANAF, pe care paginile web nu le pot citi direct. Extensia acceptă doar adrese care încep cu `https://webserviced.anaf.ro/SPVWS2/rest/`. |
 | Script de conținut pe `https://*.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
 
+Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa SPV, ca browserul să poată afișa alegerea
+certificatului și cererea de PIN; deschiderea filei nu necesită nicio permisiune, iar extensia nu citește filele
+deschise.
+
 ## 9. Drepturile dumneavoastră
 
-Conform GDPR aveți dreptul de acces (art. 15), de rectificare (art. 16), de ștergere (art. 17), de restricționare
-a prelucrării (art. 18), la portabilitatea datelor (art. 20) și de opoziție (art. 21). Nu sunteți supus unor
+Conform GDPR aveți dreptul de acces (art. 15), la rectificare (art. 16), la ștergere (art. 17), la restricționarea
+prelucrării (art. 18), la portabilitatea datelor (art. 20) și la opoziție (art. 21). Nu sunteți supus unor
 decizii bazate exclusiv pe prelucrare automată (art. 22).
 
 Extensia nu păstrează date despre dumneavoastră, deci cererile privesc datele ajunse în contul ContApp. Le puteți
@@ -115,7 +121,7 @@ trimite la [dpo@contapp.ro](mailto:dpo@contapp.ro) sau prin poștă la sediul de
 de la primire (art. 12 alin. (3) GDPR).
 
 Aveți dreptul să depuneți plângere la Autoritatea Națională de Supraveghere a Prelucrării Datelor cu Caracter
-Personal (ANSPDCP), B-dul G-ral. Gheorghe Magheru nr. 28-30, sector 1, București,
+Personal (ANSPDCP), B-dul G-ral. Gheorghe Magheru nr. 28-30, sector 1, cod poștal 010336, București,
 [anspdcp@dataprotection.ro](mailto:anspdcp@dataprotection.ro), [dataprotection.ro](https://www.dataprotection.ro),
 și să vă adresați instanței.
 
@@ -169,14 +175,15 @@ It only acts when a ContApp page you opened asks it to:
    authentication;
 3. the extension returns ANAF's response (JSON data or a PDF file), unchanged, to the ContApp page that asked for it.
 
-The extension refuses any other address. It does not run in the background, does not check SPV on its own, has no
-settings page and makes no automated decisions.
+The extension refuses any other address. It does nothing on its own initiative: its background component runs only
+while answering a request from a ContApp page; it does not check SPV on its own, has no settings page and makes no
+automated decisions.
 
 ## 3. What data it processes, for what purpose and on what legal basis
 
 | Data | Purpose | Legal basis |
 |---|---|---|
-| SPV responses: the message list (id, type, date, tax ID, details, the certificate holder's personal identification number, the tax IDs it can access) and downloaded documents, which can contain personal and tax data | Showing and keeping your SPV messages and documents in your ContApp account, at your request | Performance of the ContApp platform contract (Art. 6(1)(b) GDPR) |
+| SPV responses: the message list (id, type, date, tax ID (CIF), details, the certificate holder's personal identification number (CNP), the certificate serial number, the tax IDs (CUI) it can access) and downloaded documents, which can contain personal and tax data | Showing and keeping your SPV messages and documents in your ContApp account, at your request | Performance of the ContApp platform contract (Art. 6(1)(b) GDPR) |
 | Document request parameters (type, tax ID, year, month, reason) | Sending the request you filled in on ContApp to ANAF | Performance of the contract (Art. 6(1)(b) GDPR) |
 
 **What the extension does not process:**
@@ -184,13 +191,14 @@ settings page and makes no automated decisions.
 - **Certificate and PIN.** Choosing the certificate and entering the PIN are handled by the browser, the operating
   system and the token or cloud-signature software. The extension never sees the PIN and has no access to the
   private key.
-- **Cookies.** The extension sets, reads and saves no cookies. After authentication the browser keeps the session
-  cookie set by ANAF, as it does for any website.
+- **Cookies.** The extension reads and saves no cookies. The requests it sends to ANAF do carry the cookies the
+  browser already holds for `webserviced.anaf.ro` (the session cookie ANAF sets after authentication), like any
+  request made from the browser.
 - **Browsing history, other sites' content, usage data.** The extension does not access them.
 
 For your ContApp account data, Kronos IT Support & Consulting SRL is the controller. For the data in the SPV
-documents of the companies you manage, ContApp acts as a processor on your behalf, under chapter XXII of the
-[terms and conditions](https://contapp.ro/termeni-si-conditii/).
+documents of the companies you manage, Kronos IT Support & Consulting SRL (ContApp) acts as a processor on your behalf,
+under chapter XXII of the [terms and conditions](https://contapp.ro/termeni-si-conditii/).
 
 Using the extension is optional. Without it, syncing SPV messages through the certificate in your browser is not
 available, but the rest of the ContApp platform works.
@@ -218,7 +226,7 @@ are described in the [ContApp privacy policy](https://contapp.ro/politica-de-con
 ## 6. How long data is kept
 
 - **The extension:** keeps nothing. ANAF's responses stay in browser memory only while being handed to the ContApp
-  page. The extension has no storage permission.
+  page. The extension has no `storage` permission.
 - **ContApp:** synced messages and documents stay in your account until you delete them or close the account, then
   for the periods in the [ContApp privacy policy](https://contapp.ro/politica-de-confidentialitate/), section
   "Perioada de stocare", or those required by law.
@@ -233,9 +241,11 @@ only accepts requests from ContApp pages and only for addresses in ANAF's SPV se
 
 | Permission | Why |
 |---|---|
-| `tabs` | Opens a new tab on ANAF's SPV address so the browser can show the certificate picker and the PIN prompt. The extension does not read open tabs. |
 | Host access to `https://webserviced.anaf.ro/*` | Reads responses from ANAF's SPV service, which web pages cannot read directly. The extension only accepts addresses starting with `https://webserviced.anaf.ro/SPVWS2/rest/`. |
 | Content script on `https://*.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
+
+To authenticate at ANAF, the extension opens a new tab on the SPV address so the browser can show the certificate
+picker and the PIN prompt; opening the tab needs no permission, and the extension does not read open tabs.
 
 ## 9. Your rights
 
@@ -247,8 +257,9 @@ The extension keeps no data about you, so requests concern the data that reached
 [dpo@contapp.ro](mailto:dpo@contapp.ro) or by post to the registered office above. We answer within one month of
 receipt (Art. 12(3) GDPR).
 
-You have the right to lodge a complaint with the Romanian data protection authority, ANSPDCP, B-dul G-ral. Gheorghe
-Magheru nr. 28-30, sector 1, Bucharest, [anspdcp@dataprotection.ro](mailto:anspdcp@dataprotection.ro),
+You have the right to lodge a complaint with the Romanian data protection authority (Autoritatea Națională de
+Supraveghere a Prelucrării Datelor cu Caracter Personal, ANSPDCP), B-dul G-ral. Gheorghe Magheru nr. 28-30, sector 1,
+postal code 010336, Bucharest, [anspdcp@dataprotection.ro](mailto:anspdcp@dataprotection.ro),
 [dataprotection.ro](https://www.dataprotection.ro), and to go to court.
 
 ## 10. Uninstalling
