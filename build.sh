@@ -12,9 +12,12 @@ for target in chrome firefox; do
     cp -R background.js content.js icons "dist/$target/"
 done
 
-jq 'del(.browser_specific_settings)' manifest.json > dist/chrome/manifest.json
-jq '.background = {scripts: ["background.js"]}
-    | .browser_specific_settings.gecko.data_collection_permissions = {required: ["none"]}' \
+# Release builds only run on production hosts; the local contapp.test entries stay in the source manifest for development.
+production='.content_scripts[].matches |= map(select(test("\\.test/") | not))'
+
+jq "$production | del(.browser_specific_settings)" manifest.json > dist/chrome/manifest.json
+jq "$production | .background = {scripts: [\"background.js\"]}
+    | .browser_specific_settings.gecko.data_collection_permissions = {required: [\"none\"]}" \
     manifest.json > dist/firefox/manifest.json
 
 for target in chrome firefox; do
