@@ -3,6 +3,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the last release's version to increase
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: write
@@ -22,22 +29,51 @@ jobs:
       EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
       EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
     steps:
+      - name: Releases are cut from main only
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow on the main branch."
+          exit 1
+
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-      - name: Check the tag matches the manifest version
+      - name: Work out the version
         id: version
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
-          version=$(jq -r '.version' manifest.json)
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json version $version"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            last=$(git tag --list 'v*' --sort=-v:refname | head -1)
+            IFS=. read -r major minor patch <<< "${last#v}"
+            case "$BUMP" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              *) version="$major.$minor.$((patch + 1))" ;;
+            esac
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Not a release version: $version"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version" >> "$GITHUB_STEP_SUMMARY"
+
+      # The tag is the source of truth; the manifest in the repository keeps whatever version it last had.
+      - name: Stamp the version into the manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          jq --arg v "$VERSION" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
 
       - run: npm ci
 
@@ -49,10 +85,11 @@ jobs:
 
       - name: Create GitHub release
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "${{ steps.version.outputs.tag }}" \
             "dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip" \
             "dist/contapp-spv-firefox-${{ steps.version.outputs.version }}.zip" \
-            --title "$GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.version.outputs.tag }}" \
             --generate-notes
 
       - name: Publish to the Chrome Web Store
@@ -73,7 +110,7 @@ jobs:
           npx web-ext sign --source-dir dist/firefox --channel unlisted \
             --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
             --artifacts-dir dist/signed
-          gh release upload "$GITHUB_REF_NAME" dist/signed/*.xpi --clobber
+          gh release upload "${{ steps.version.outputs.tag }}" dist/signed/*.xpi --clobber
 
       - name: Publish to Edge Add-ons
         if: env.EDGE_PRODUCT_ID != ''
@@ -103,5 +140,5 @@ jobs:
             --data-binary @"dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip" "$api/draft/package")
           wait_for "$api/draft/package/operations/$upload"
 
-          publish=$(operation -X POST -H "Content-Type: application/json" -d '{"notes":"Release ${{ github.ref_name }}"}' "$api")
+          publish=$(operation -X POST -H "Content-Type: application/json" -d '{"notes":"Release ${{ steps.version.outputs.tag }}"}' "$api")
           wait_for "$api/operations/$publish"
