@@ -278,10 +278,19 @@ from other stores), so the Edge listing below is optional.
 ## Store checklist
 
 - [ ] Privacy policy page on contapp.ro (no data collected; responses go only to the contapp page that asked).
-      [PRIVACY.md](PRIVACY.md) is the text.
+      [store/privacy-policy.html](store/privacy-policy.html) is the page, [PRIVACY.md](PRIVACY.md) its Markdown twin.
 - [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for `tabs` and the
       `webserviced.anaf.ro` host permission.
 - [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.
 - [ ] Bump `version` in `manifest.json` (and `package.json`) for every published build.
+
+### Store listing
+
+- [store/listing.md](store/listing.md): every text and answer to paste into the Chrome Web Store, Edge Partner
+  Center and (if asked) AMO forms: descriptions, single purpose, permission justifications, data-usage answers,
+  reviewer notes and the assets checklist.
+- [store/privacy-policy.html](store/privacy-policy.html): the privacy policy as a standalone page (Romanian, then
+  English) to host on contapp.ro; its URL goes into every store's privacy-policy field.
+- [store/screenshots/](store/screenshots/): the 1280×800 store screenshots listed in `store/listing.md`.
