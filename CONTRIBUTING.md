@@ -25,6 +25,5 @@ Firefox. Add or update a test in `test/` for every behaviour change.
 
 ## Releasing
 
-Maintainers only. Bump `version` in `manifest.json` and `package.json` (`npm install` syncs the lockfile), add a
-`CHANGELOG.md` entry, merge, then tag `vX.Y.Z` on `main` and push the tag. The release workflow does the rest
-(README → Release process).
+Maintainers only: Actions → **Release** → **Run workflow** on `main` with the bump you want (`patch` by default).
+The tag is the version; nothing needs bumping by hand (README → Release process).

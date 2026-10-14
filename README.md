@@ -214,16 +214,19 @@ Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md); security reports: [SECURI
 
 ## Release process
 
-1. Bump `version` in **both** `manifest.json` and `package.json` (then `npm install` to sync the lockfile).
-2. Add a section to `CHANGELOG.md`.
-3. Commit, then tag and push:
-   ```sh
-   git tag v1.2.3
-   git push && git push --tags
-   ```
+**From the browser (normal way):** Actions → **Release** → **Run workflow** → branch `main`, bump `patch`
+(or `minor` / `major`) → **Run workflow**. The workflow takes the latest `v*` tag, increases it, and releases
+the current `main` under the new tag.
 
-The `Release` workflow then checks that the tag equals `v` + the manifest version (and fails otherwise),
-runs the tests, builds, lints, and creates a GitHub Release with both zips and auto-generated notes.
+**From a terminal (alternative):** tag a commit on `main` and push the tag (`git tag -a v1.2.3 -m v1.2.3 &&
+git push origin v1.2.3`); the workflow releases that tag.
+
+Either way the tag is the version: the workflow stamps it into `manifest.json` before building, so the version in
+the repository's `manifest.json` is never bumped by hand (it only matters for load-unpacked development). The
+workflow then runs the tests, builds, lints, and creates the GitHub Release with both zips and notes generated
+from the merged pull requests. Only repository admins and this workflow may create `v*` tags (ruleset
+*Release tags*); tags cannot be moved or deleted.
+
 Two more steps run only when their secrets are configured, and are skipped otherwise:
 
 | Step | Repository secrets |
@@ -290,7 +293,6 @@ from other stores), so the Edge listing below is optional.
 - [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.
-- [ ] Bump `version` in `manifest.json` (and `package.json`) for every published build.
 
 ### Store listing
 
