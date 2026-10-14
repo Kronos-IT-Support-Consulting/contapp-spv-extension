@@ -224,8 +224,8 @@ git push origin v1.2.3`); the workflow releases that tag.
 Either way the tag is the version: the workflow stamps it into `manifest.json` before building, so the version in
 the repository's `manifest.json` is never bumped by hand (it only matters for load-unpacked development). The
 workflow then runs the tests, builds, lints, and creates the GitHub Release with both zips and notes generated
-from the merged pull requests. Only repository admins and this workflow may create `v*` tags (ruleset
-*Release tags*); tags cannot be moved or deleted.
+from the merged pull requests. Creating a release needs write access to the repository; once created, `v*` tags
+cannot be moved or deleted (ruleset *Release tags*).
 
 Two more steps run only when their secrets are configured, and are skipped otherwise:
 
