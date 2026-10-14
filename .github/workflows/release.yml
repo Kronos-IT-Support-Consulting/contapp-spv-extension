@@ -14,20 +14,20 @@ on:
 permissions:
   contents: write
 
+# One release at a time; a second run waits instead of computing the same next version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
-      CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
-      CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
-      CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
-      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
-      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-      EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
-      EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-      EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+      # Only these booleans reach every step; the secrets themselves are scoped to the step that uses them.
+      HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
+      HAS_AMO: ${{ secrets.AMO_JWT_ISSUER != '' }}
+      HAS_EDGE: ${{ secrets.EDGE_PRODUCT_ID != '' }}
     steps:
       - name: Releases are cut from main only
         if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
@@ -38,6 +38,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: A pushed tag must point at a commit on main
+        if: github.event_name == 'push'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main; releases are cut from reviewed commits only."
+            exit 1
+          fi
 
       - uses: actions/setup-node@v7
         with:
@@ -52,13 +60,22 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             version="${GITHUB_REF_NAME#v}"
           else
-            last=$(git tag --list 'v*' --sort=-v:refname | head -1)
-            IFS=. read -r major minor patch <<< "${last#v}"
-            case "$BUMP" in
-              major) version="$((major + 1)).0.0" ;;
-              minor) version="$major.$((minor + 1)).0" ;;
-              *) version="$major.$minor.$((patch + 1))" ;;
-            esac
+            last=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            if [ -z "$last" ]; then
+              echo "::error::No release tag (vX.Y.Z) to bump from; push the first tag by hand."
+              exit 1
+            fi
+            if [ "$(git rev-list -n 1 "$last")" = "$GITHUB_SHA" ]; then
+              # A re-run after a partial failure: this commit is already released under $last.
+              version="${last#v}"
+            else
+              IFS=. read -r major minor patch <<< "${last#v}"
+              case "$BUMP" in
+                major) version="$((major + 1)).0.0" ;;
+                minor) version="$major.$((minor + 1)).0" ;;
+                *) version="$major.$minor.$((patch + 1))" ;;
+              esac
+            fi
           fi
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Not a release version: $version"
@@ -84,43 +101,60 @@ jobs:
       - run: npm run lint
 
       - name: Create GitHub release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            "dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip" \
-            "dist/contapp-spv-firefox-${{ steps.version.outputs.version }}.zip" \
-            --target "$GITHUB_SHA" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --generate-notes
+          zips=("dist/contapp-spv-chrome-$VERSION.zip" "dist/contapp-spv-firefox-$VERSION.zip")
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Re-run: keep the release and its notes, refresh the assets.
+            gh release upload "$TAG" "${zips[@]}" --clobber
+          else
+            gh release create "$TAG" "${zips[@]}" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
 
       - name: Publish to the Chrome Web Store
-        if: env.CWS_EXTENSION_ID != ''
+        if: env.HAS_CWS == 'true'
         env:
-          EXTENSION_ID: ${{ env.CWS_EXTENSION_ID }}
-          CLIENT_ID: ${{ env.CWS_CLIENT_ID }}
-          CLIENT_SECRET: ${{ env.CWS_CLIENT_SECRET }}
-          REFRESH_TOKEN: ${{ env.CWS_REFRESH_TOKEN }}
-        run: >-
-          npx --yes chrome-webstore-upload-cli@3 upload
-          --source "dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip"
-          --auto-publish
+          VERSION: ${{ steps.version.outputs.version }}
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        # chrome-webstore-upload-cli is a pinned devDependency, so npm ci already installed it from the lockfile.
+        run: npx --no-install chrome-webstore-upload upload --source "dist/contapp-spv-chrome-$VERSION.zip" --auto-publish
 
       - name: Sign for Firefox (unlisted)
-        if: env.AMO_JWT_ISSUER != ''
+        if: env.HAS_AMO == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
-          npx web-ext sign --source-dir dist/firefox --channel unlisted \
-            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
-            --artifacts-dir dist/signed
-          gh release upload "${{ steps.version.outputs.tag }}" dist/signed/*.xpi --clobber
+          npx --no-install web-ext sign --source-dir dist/firefox --channel unlisted --artifacts-dir dist/signed
+          gh release upload "$TAG" dist/signed/*.xpi --clobber
 
       - name: Publish to Edge Add-ons
-        if: env.EDGE_PRODUCT_ID != ''
+        if: env.HAS_EDGE == 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
         run: |
           api="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID/submissions"
           auth=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
 
+          # Starts an operation; prints the operation id from the Location header, or the error body.
           operation() {
-            curl -sS --fail-with-body -D - -o /dev/null "${auth[@]}" "$@" \
-              | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n] }'
+            if ! curl -sS --fail-with-body "${auth[@]}" -D headers.txt -o body.txt "$@"; then
+              cat body.txt; echo
+              echo "::error::Edge request failed"
+              return 1
+            fi
+            awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n] }' headers.txt
           }
 
           wait_for() {
@@ -128,17 +162,19 @@ jobs:
               status=$(curl -sS --fail-with-body "${auth[@]}" "$1" | jq -r '.status')
               case "$status" in
                 Succeeded) return 0 ;;
-                Failed) curl -sS "${auth[@]}" "$1"; echo "::error::Edge operation failed"; return 1 ;;
+                InProgress) sleep 10 ;;
+                *) curl -sS "${auth[@]}" "$1"; echo; echo "::error::Edge operation ended with status '$status'"; return 1 ;;
               esac
-              sleep 10
             done
             echo "::error::Timed out waiting for $1"
             return 1
           }
 
           upload=$(operation -H "Content-Type: application/zip" \
-            --data-binary @"dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip" "$api/draft/package")
+            --data-binary @"dist/contapp-spv-chrome-$VERSION.zip" "$api/draft/package")
+          [ -n "$upload" ] || { echo "::error::No operation id for the package upload"; exit 1; }
           wait_for "$api/draft/package/operations/$upload"
 
-          publish=$(operation -X POST -H "Content-Type: application/json" -d '{"notes":"Release ${{ steps.version.outputs.tag }}"}' "$api")
+          publish=$(operation -X POST -H "Content-Type: application/json" -d "{\"notes\":\"Release $TAG\"}" "$api")
+          [ -n "$publish" ] || { echo "::error::No operation id for the publish request"; exit 1; }
           wait_for "$api/operations/$publish"

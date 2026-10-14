@@ -22,12 +22,15 @@ See [PRIVACY.md](PRIVACY.md).
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3, Chrome/Edge shaped. Source of truth for the version. |
+| `manifest.json` | Manifest V3, Chrome/Edge shaped. Its `version` is stamped from the release tag by the workflow; the `1.0.0` in the repository only matters for load-unpacked development. |
 | `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
-| `icons/` | 16/48/128 PNG icons. |
+| `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
 | `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`). |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
+| `store/` | Store listing texts, the 512 px store icon and the screenshots. |
+| `PRIVACY.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` | Privacy policy (published by GitHub Pages), changelog, security policy, contribution rules, MIT licence. |
+| `.github/` | CI and release workflows, Dependabot, code owners, pull request template. |
 
 ## Install
 
@@ -36,7 +39,7 @@ cloud-signature agent) must be installed on that machine.
 
 ### Chrome Web Store
 
-Coming soon.
+Not published yet. The listing will be unlisted; the install link will be shown on ContApp's *Certificat SPV* page.
 
 ### From a GitHub release (Chrome / Edge)
 
@@ -61,6 +64,13 @@ Firefox MV3 does not run `background.service_worker`; it needs `background.scrip
 that key for the Firefox variant, adds the `data_collection_permissions` declaration AMO requires, and drops
 `browser_specific_settings` from the Chrome variant. The gecko id `spv@contapp.ro` must stay stable.
 
+The declaration lists *personally identifying* and *financial* information: the extension stores nothing itself,
+but the SPV responses it relays carry the certificate holder's CNP, CUIs and tax documents, which the ContApp page
+then stores in the user's account, and Mozilla counts data handed outside the add-on as collection. Firefox 140+
+shows this in the install prompt, hence `strict_min_version: "140.0"`. Firefox also lets the user revoke the ANAF
+host permission at any time (*about:addons* → ContApp SPV → *Permissions*); the extension then answers `network`
+with the message `permission for https://webserviced.anaf.ro/* is not granted`.
+
 ## Protocol
 
 Page ↔ content script, via `window.postMessage`. Both sides check `event.origin === location.origin` and
@@ -74,20 +84,28 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 |---|---|
 | `{type:"ping"}` | `{ok:true, version}` |
 | `{type:"fetch", url}` | `{ok:true, status, url, body}` with `body` an ArrayBuffer (structured clone) |
-| `{type:"login", url}` | `{ok:true}` after `chrome.tabs.create({url})` |
-| any | `{ok:false, error:"certificate_required"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type"}` |
+| `{type:"login", url}` | `{ok:true}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
+| any | `{ok:false, error:"certificate_required"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure. The page should offer the `login` action.
-- `forbidden_url`: the URL is not under the SPV REST prefix.
-- `network`: anything else went wrong; `message` carries the error text.
-- `extension`: the content script could not reach the service worker (extension reloaded/updated; reload
-  the ContApp page).
+- `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the SPV REST prefix
+  (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
+- `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
+  response too large to hand over (above 47 MiB), a host permission the user revoked, and a login tab that could
+  not be opened.
+- `extension`: the content script got no usable answer from the service worker (extension reloaded or updated,
+  or a service worker that died mid-request). Retry once; if it persists, reload the ContApp page.
 - `unknown_type`: the `type` is none of the above.
 
+The request follows redirects, and the reply's `url` is the final one. When ANAF's session is gone, the SPV
+service redirects to its F5 login pages and answers `200` with HTML: the reply is still `ok:true`, so the page
+should check that `url` still starts with the SPV REST prefix and otherwise treat the session as lost and offer
+`login`.
+
 Presence check without a round trip: the content script sets
-`document.documentElement.dataset.spvExtension` (i.e. `<html data-spv-extension="1.0.0">`) at
+`document.documentElement.dataset.spvExtension` (i.e. `<html data-spv-extension="<version>">`) at
 `document_start`.
 
 Example from the page:
@@ -151,7 +169,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    certificate picker and a PIN prompt.
 2. Quit and restart Chrome so no certificate choice is cached.
 3. Load the extension unpacked (above). Open any ContApp page and the DevTools console.
-4. Ping: run the example snippet above. Expect `{ok:true, version:"1.0.0", ...}`.
+4. Ping: run the example snippet above. Expect `{ok:true, version:"<version>", ...}`.
 5. Fetch before login, expect `certificate_required`:
    ```js
    const ask = (msg) => new Promise((resolve) => {
@@ -197,7 +215,7 @@ syncing.
 Requires Node 22+, `jq` and `zip`.
 
 ```sh
-npm install      # web-ext, the only dev dependency
+npm install      # web-ext and the Chrome Web Store uploader, the only dev dependencies
 npm test         # node:test suites in test/
 ./build.sh       # dist/chrome, dist/firefox and both zips
 npm run lint     # web-ext lint on dist/firefox (run ./build.sh first)
@@ -227,7 +245,7 @@ workflow then runs the tests, builds, lints, and creates the GitHub Release with
 from the merged pull requests. Creating a release needs write access to the repository; once created, `v*` tags
 cannot be moved or deleted (ruleset *Release tags*).
 
-Two more steps run only when their secrets are configured, and are skipped otherwise:
+Three more steps run only when their secrets are configured, and are skipped otherwise:
 
 | Step | Repository secrets |
 |---|---|
@@ -288,8 +306,8 @@ from other stores), so the Edge listing below is optional.
 ## Store checklist
 
 - [x] Privacy policy: [PRIVACY.md](PRIVACY.md), served by GitHub Pages at <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>.
-- [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for `tabs` and the
-      `webserviced.anaf.ro` host permission.
+- [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for the
+      `webserviced.anaf.ro` host permission, data-usage disclosure matching the privacy policy.
 - [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.
@@ -302,3 +320,12 @@ from other stores), so the Edge listing below is optional.
 - [PRIVACY.md](PRIVACY.md): the privacy policy (Romanian, then English), published by GitHub Pages at
   <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>; that URL goes into every store's privacy-policy field.
 - [store/screenshots/](store/screenshots/): the 1280×800 store screenshots listed in `store/listing.md`.
+- GitHub Pages is configured in the repository settings (branch `main`, folder `/`), not in a workflow;
+  `_config.yml` keeps the scripts and tests out of the published site.
+
+## Known limitations
+
+- The content script matches `https://*.contapp.ro/*`, which includes the apex `contapp.ro` (the marketing site)
+  and every other subdomain. Any script injection on one of those hosts can drive the proxy. Narrow `matches` to the
+  exact application host(s) once they are fixed; this needs the same change in the store justifications and in
+  `PRIVACY.md`.
