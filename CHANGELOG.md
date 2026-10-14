@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- Icons use the contapp mark in brand green with an "SPV" badge (toolbar size: the mark alone); sources in `icons/icon.svg` and `icons/icon-small.svg`, store icon in `store/icon-512.png`.
+
+### Changed
+
 - Privacy policy follows GDPR Art. 13 (controller details, DPO, purposes and legal bases, recipients, transfers, retention, rights, ANSPDCP) and is published from `PRIVACY.md` by GitHub Pages; the duplicate HTML page is gone.
 - Release builds only match `https://*.contapp.ro/*`.
 
