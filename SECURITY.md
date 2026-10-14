@@ -16,6 +16,6 @@ in `CHANGELOG.md` unless you prefer otherwise.
 
 ## Scope
 
-The extension only forwards requests from contapp pages to `https://webserviced.anaf.ro/SPVWS2/rest/*` and
-returns the raw response. Reports about the contapp application itself go to the same address; reports about
+The extension only forwards requests from ContApp pages to `https://webserviced.anaf.ro/SPVWS2/rest/*` and
+returns the raw response. Reports about the ContApp application itself go to the same address; reports about
 ANAF's service go to ANAF.

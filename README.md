@@ -1,10 +1,10 @@
-# contapp SPV browser extension
+# ContApp SPV browser extension
 
 [![CI](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kronos-IT-Support-Consulting/contapp-spv-extension)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Lets [contapp](https://contapp.ro) read ANAF SPV messages using the qualified certificate that lives in the
+Lets [ContApp](https://contapp.ro) read ANAF SPV messages using the qualified certificate that lives in the
 user's browser (USB token, cloud HSM, OS keychain).
 
 ## What it is
@@ -12,10 +12,10 @@ user's browser (USB token, cloud HSM, OS keychain).
 ANAF's SPV web service (`https://webserviced.anaf.ro/SPVWS2/rest/`) only answers over mutual TLS, and the
 user's qualified certificate usually lives on a USB token or cloud HSM whose key cannot be exported. The
 browser already knows how to do that handshake (the OS keychain / PKCS#11 middleware asks for the PIN), but
-a contapp page cannot read the response: ANAF sends no CORS headers and there is no JS API for client
+a ContApp page cannot read the response: ANAF sends no CORS headers and there is no JS API for client
 certificates.
 
-This extension is a dumb fetch proxy. A contapp page asks it to fetch an SPV URL, the browser performs the
+This extension is a dumb fetch proxy. A ContApp page asks it to fetch an SPV URL, the browser performs the
 mTLS handshake with the user's certificate, and the raw response is handed back to the page. The extension
 holds no API token, does no background polling, stores nothing and never sees the PIN or the private key.
 See [PRIVACY.md](PRIVACY.md).
@@ -24,14 +24,14 @@ See [PRIVACY.md](PRIVACY.md).
 |---|---|
 | `manifest.json` | Manifest V3, Chrome/Edge shaped. Source of truth for the version. |
 | `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
-| `content.js` | Injected into contapp pages; bridges `window.postMessage` to the service worker. |
+| `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
 | `icons/` | 16/48/128 PNG icons. |
 | `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`). |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
 
 ## Install
 
-The contapp page must be open in the same browser profile, and the token's middleware (or the
+The ContApp page must be open in the same browser profile, and the token's middleware (or the
 cloud-signature agent) must be installed on that machine.
 
 ### Chrome Web Store
@@ -46,7 +46,7 @@ Coming soon.
 2. Open `chrome://extensions` (Edge: `edge://extensions`).
 3. Enable **Developer mode**.
 4. **Load unpacked** → select the unzipped folder.
-5. Reload any open contapp tab so the content script is injected.
+5. Reload any open ContApp tab so the content script is injected.
 
 ### Firefox (temporary add-on)
 
@@ -83,7 +83,7 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 - `forbidden_url`: the URL is not under the SPV REST prefix.
 - `network`: anything else went wrong; `message` carries the error text.
 - `extension`: the content script could not reach the service worker (extension reloaded/updated; reload
-  the contapp page).
+  the ContApp page).
 - `unknown_type`: the `type` is none of the above.
 
 Presence check without a round trip: the content script sets
@@ -102,20 +102,20 @@ window.addEventListener("message", function onReply(event) {
 window.postMessage({ channel: "contapp-spv", id, type: "ping" }, location.origin);
 ```
 
-## How contapp uses it
+## How ContApp uses it
 
-The page side of the protocol (`spv-bridge.js`) lives in the contapp application, not here. It detects the
-extension through `<html data-spv-extension>`, sends `ping`/`fetch`/`login` requests, and contapp's server
-parses the SPV responses it hands back. contapp's connect form offers only the browser extension as the
+The page side of the protocol (`spv-bridge.js`) lives in the ContApp application, not here. It detects the
+extension through `<html data-spv-extension>`, sends `ping`/`fetch`/`login` requests, and ContApp's server
+parses the SPV responses it hands back. ContApp's connect form offers only the browser extension as the
 way to reach SPV, so any change to the message shapes above must ship in both repositories together.
 
 ### End-to-end walkthrough (what the user sees)
 
-1. **Connect the certificate** — contapp → account menu → *Certificat SPV*. There is nothing to upload:
+1. **Connect the certificate** — ContApp → account menu → *Certificat SPV*. There is nothing to upload:
    click **Conectează**. The page now shows the connected state with *CNP titular* empty and
    *Nesincronizat încă*.
 2. **Verify** — click **Verifică**.
-   - Without the extension: a callout *Instalează extensia contapp SPV* appears and the button stays
+   - Without the extension: a callout *Instalează extensia ContApp SPV* appears and the button stays
      disabled. Install, then reload the page.
    - First time in this browser session: a warning toast *ANAF a cerut certificatul…* and a callout with
      the **Autentificare ANAF** button appear. This is expected: a background request cannot show the
@@ -126,16 +126,16 @@ way to reach SPV, so any change to the message shapes above must ship in both re
    a message list or `{"eroare":…}`). That JSON *is* the success: the browser now holds the ANAF
    session cookie and remembers the certificate for this host. Close the tab or leave it, both work.
    If the tab shows an F5 `/my.policy` page instead, wait for it to redirect; if it stays blank, reload it once.
-4. **Verify again** — back in contapp, click **Verifică**. A success toast *Certificat valid pentru CNP …,
+4. **Verify again** — back in ContApp, click **Verifică**. A success toast *Certificat valid pentru CNP …,
    cu acces la N CUI-uri* appears and the page fills in *CNP titular*, *Serie certificat* and *CUI-uri acces*.
 5. **Sync the inbox** — sidebar *Declarații* → *Mesaje SPV* → **Sincronizează SPV**. The toast reports
    how many messages were created, updated and skipped, and the table lists the messages whose CIF matches
-   the current company. Messages for CUIs that are not a contapp company count as *ignorate*.
+   the current company. Messages for CUIs that are not a ContApp company count as *ignorate*.
 6. **Download a message** — click the download icon on a row. The extension fetches the PDF from
-   `descarcare?id=<anaf id>`, contapp stores it, the row flips to *Descărcat* and the PDF opens in a new
+   `descarcare?id=<anaf id>`, ContApp stores it, the row flips to *Descărcat* and the PDF opens in a new
    tab. From then on the icon links straight to the stored file, with no ANAF round trip.
 7. **Session expiry** — when ANAF drops the session (toast *ANAF a cerut certificatul…* again), repeat
-   steps 3 and 4. Nothing is lost; synced messages and downloaded PDFs stay in contapp.
+   steps 3 and 4. Nothing is lost; synced messages and downloaded PDFs stay in ContApp.
 8. **Request a document** — on *Mesaje SPV* click **Cerere nouă**, pick a type (e.g. *D300*) and fill only
    the fields it asks for (year, month, reason, …), then **Trimite cererea**. The extension calls
    `cerere?tip=…&cui=<current company>…` and the toast reads *Cererea <id> a fost transmisă…*. ANAF generates
@@ -150,7 +150,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=1` directly in a tab should show the
    certificate picker and a PIN prompt.
 2. Quit and restart Chrome so no certificate choice is cached.
-3. Load the extension unpacked (above). Open any contapp page and the DevTools console.
+3. Load the extension unpacked (above). Open any ContApp page and the DevTools console.
 4. Ping: run the example snippet above. Expect `{ok:true, version:"1.0.0", ...}`.
 5. Fetch before login, expect `certificate_required`:
    ```js
@@ -174,7 +174,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    `await ask({ type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=<id>" })`;
    the body should start with `%PDF` (`new TextDecoder().decode(r.body.slice(0, 4))`).
 9. Forbidden URL: `await ask({ type: "fetch", url: "https://example.com/" })` → `forbidden_url`.
-10. Service worker logs: `chrome://extensions` → contapp SPV → **service worker** link → console.
+10. Service worker logs: `chrome://extensions` → ContApp SPV → **service worker** link → console.
 
 ### Spike findings
 
@@ -208,7 +208,7 @@ fails on the missing `background.scripts` fallback and gecko id, which Chrome ne
 
 To try changes, load the repository folder unpacked in Chrome (it is Chrome-shaped as is and still matches the
 local `contapp.test` hosts), or `dist/firefox` in Firefox after `./build.sh`. Reload the extension and the
-contapp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on `*.contapp.ro`.
+ContApp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on `*.contapp.ro`.
 
 Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md); security reports: [SECURITY.md](SECURITY.md). MIT licensed.
 

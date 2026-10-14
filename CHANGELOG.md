@@ -17,12 +17,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [1.0.0] — 2026-10-13
 
-First standalone release, moved out of the contapp application repository.
+First standalone release, moved out of the ContApp application repository.
 
 ### Added
 
 - `ping` answers the extension version; the version is also exposed as `<html data-spv-extension>` on
-  contapp pages.
+  ContApp pages.
 - `fetch` proxies a GET to ANAF SPV with the browser's client certificate and returns status, final URL and
   the body as an ArrayBuffer; a missing certificate is reported as `certificate_required`.
 - `login` opens the SPV URL in a new tab so the browser can show the certificate picker and PIN prompt.
