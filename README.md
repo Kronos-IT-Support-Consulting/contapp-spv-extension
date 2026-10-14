@@ -1,5 +1,9 @@
 # contapp SPV browser extension
 
+[![CI](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Kronos-IT-Support-Consulting/contapp-spv-extension)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Lets [contapp](https://contapp.ro) read ANAF SPV messages using the qualified certificate that lives in the
 user's browser (USB token, cloud HSM, OS keychain).
 
@@ -202,8 +206,11 @@ npm run lint     # web-ext lint on dist/firefox (run ./build.sh first)
 `web-ext lint` is Mozilla's linter, so it only runs on the Firefox build: on the Chrome build it always
 fails on the missing `background.scripts` fallback and gecko id, which Chrome neither needs nor wants.
 
-To try changes, load the repository folder unpacked in Chrome (it is Chrome-shaped as is), or
-`dist/firefox` in Firefox after `./build.sh`. Reload the extension and the contapp tab after each change.
+To try changes, load the repository folder unpacked in Chrome (it is Chrome-shaped as is and still matches the
+local `contapp.test` hosts), or `dist/firefox` in Firefox after `./build.sh`. Reload the extension and the
+contapp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on `*.contapp.ro`.
+
+Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md); security reports: [SECURITY.md](SECURITY.md). MIT licensed.
 
 ## Release process
 
