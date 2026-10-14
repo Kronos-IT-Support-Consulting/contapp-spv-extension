@@ -184,7 +184,7 @@ Same package as Chrome (`contapp-spv-chrome-<version>.zip`). Fields Partner Cent
 | Properties | Mature content | No |
 | Store listing (Romanian; add English as a second language) | Description | Detailed description above (Edge requires at least 250 characters) |
 | Store listing | Short description | Short description above |
-| Store listing | Extension logo | `icons/icon-128.png` (Edge asks for 1:1, 128×128 minimum; 300×300 recommended) |
+| Store listing | Extension logo | `store/icon-512.png` (Edge asks for 1:1, 128×128 minimum; 300×300 recommended) |
 | Store listing | Screenshots | `store/screenshots/*.png`, 1280×800 |
 | Store listing | Small / large promotional tile, YouTube video | Leave empty |
 | Store listing | Search terms | `contapp`, `SPV`, `ANAF`, `certificat digital`, `declarații`, `contabilitate` |
