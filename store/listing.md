@@ -3,8 +3,7 @@
 Everything to copy-paste when creating the store items by hand. After the first submission the release workflow
 only ships new versions; these texts change only when edited here.
 
-Placeholders still to fill: `[URL politica de confidențialitate]` (where `store/privacy-policy.html` ends up on
-contapp.ro) and the support URL marked *(placeholder)*.
+Placeholder still to fill: the support URL marked *(placeholder)*.
 
 ## Common
 
@@ -16,7 +15,7 @@ contapp.ro) and the support URL marked *(placeholder)*.
 | Homepage | `https://contapp.ro` |
 | Support URL | `https://contapp.ro` *(placeholder — replace with the help/contact page when there is one)* |
 | Support e-mail | `suport@contapp.ro` |
-| Privacy policy URL | `[URL politica de confidențialitate]` |
+| Privacy policy URL | `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
 | Visibility | Chrome: *Unlisted* · Edge: *Hidden* · Firefox: unlisted / self-distributed |
 
 ### Short description
@@ -152,7 +151,7 @@ Certifications, all three ticked:
 - I do not use or transfer user data for purposes that are unrelated to my item's single purpose.
 - I do not use or transfer user data to determine creditworthiness or for lending purposes.
 
-Privacy policy URL: `[URL politica de confidențialitate]`
+Privacy policy URL: `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY`
 
 ### Notes for the reviewer
 
@@ -179,7 +178,7 @@ Same package as Chrome (`contapp-spv-chrome-<version>.zip`). Fields Partner Cent
 | Availability | Visibility | **Hidden** (install only by direct link) |
 | Availability | Markets | All markets (Romania is the only one that matters) |
 | Properties | Category | Productivity |
-| Properties | Privacy policy required | Yes → `[URL politica de confidențialitate]` |
+| Properties | Privacy policy required | Yes → `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
 | Properties | Website URL | `https://contapp.ro` |
 | Properties | Support contact | `suport@contapp.ro` (or the support URL above) |
 | Properties | Mature content | No |

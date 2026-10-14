@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Privacy policy follows GDPR Art. 13 (controller details, DPO, purposes and legal bases, recipients, transfers, retention, rights, ANSPDCP) and is published from `PRIVACY.md` by GitHub Pages; the duplicate HTML page is gone.
+- Release builds only match `https://*.contapp.ro/*`.
+
 ## [1.0.0] — 2026-10-13
 
 First standalone release, moved out of the contapp application repository.
