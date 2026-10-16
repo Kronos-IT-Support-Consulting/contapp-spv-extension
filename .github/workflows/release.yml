@@ -128,6 +128,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          # Chrome Web Store API v2 addresses items as publishers/<publisher id>/items/<extension id>.
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
           CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}

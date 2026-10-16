@@ -278,7 +278,7 @@ Three more steps run only when their secrets are configured, and are skipped oth
 
 | Step | Repository secrets |
 |---|---|
-| Upload and publish the Chrome zip to the Chrome Web Store | `CWS_EXTENSION_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN` |
+| Upload and publish the Chrome zip to the Chrome Web Store | `CWS_EXTENSION_ID`, `CWS_PUBLISHER_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN` |
 | Sign the Firefox build on AMO (unlisted) and attach the `.xpi` to the release | `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` |
 | Upload the Chrome zip to Edge Add-ons and submit it for review | `EDGE_PRODUCT_ID`, `EDGE_CLIENT_ID`, `EDGE_API_KEY` |
 
@@ -289,7 +289,8 @@ listing created once by hand; the workflow only ships new versions of an existin
 
 1. In the [developer dashboard](https://chrome.google.com/webstore/devconsole) create the item by uploading
    `contapp-spv-chrome-<version>.zip`, fill in the listing and privacy tabs, choose *Unlisted* and submit it.
-   The 32-letter id shown on the item is `CWS_EXTENSION_ID`.
+   The 32-letter id shown on the item is `CWS_EXTENSION_ID`. The publisher id on the dashboard's *Settings*
+   page is `CWS_PUBLISHER_ID`; the uploader (Chrome Web Store API v2) refuses to run without it.
 2. In [Google Cloud Console](https://console.cloud.google.com/), with the **same Google account** that owns
    the dashboard item: create a project, *APIs & Services → Library* → enable **Chrome Web Store API**.
 3. *APIs & Services → OAuth consent screen*: user type *External*, fill in the app name and emails, no scopes
