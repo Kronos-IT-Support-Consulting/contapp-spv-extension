@@ -4,8 +4,14 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # A compromised release is usually caught within days; waiting a week keeps it out of the release job.
+    cooldown:
+      default-days: 7
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: monthly
+    # A compromised release is usually caught within days; waiting a week keeps it out of the release job.
+    cooldown:
+      default-days: 7
     versioning-strategy: increase

@@ -23,8 +23,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ github.token }}
-      # Only these booleans reach every step; the secrets themselves are scoped to the step that uses them.
+      # Only these booleans reach every step; the secrets and the GitHub token are scoped to the steps that use them.
       HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
       HAS_AMO: ${{ secrets.AMO_JWT_ISSUER != '' }}
       HAS_EDGE: ${{ secrets.EDGE_PRODUCT_ID != '' }}
@@ -35,9 +34,10 @@ jobs:
           echo "::error::Run this workflow on the main branch."
           exit 1
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: A pushed tag must point at a commit on main
         if: github.event_name == 'push'
@@ -49,7 +49,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -95,7 +95,9 @@ jobs:
         run: |
           jq --arg v "$VERSION" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
 
-      - run: npm ci
+      # Nothing in the lockfile needs an install script. Dependency code still runs in lint and the store steps,
+      # which is why the GitHub token only reaches the two steps that call gh.
+      - run: npm ci --ignore-scripts
 
       - run: npm test
 
@@ -105,6 +107,7 @@ jobs:
 
       - name: Create GitHub release
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -137,6 +140,7 @@ jobs:
         if: env.HAS_AMO == 'true'
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
