@@ -3,8 +3,9 @@
     "name": "ContApp SPV",
     "version": "1.0.0",
     "description": "Permite ContApp să citească mesajele din SPV ANAF folosind certificatul digital din browser.",
+    "permissions": ["cookies"],
     "host_permissions": ["https://webserviced.anaf.ro/*"],
-    "minimum_chrome_version": "110",
+    "minimum_chrome_version": "119",
     "background": {
         "service_worker": "background.js"
     },
