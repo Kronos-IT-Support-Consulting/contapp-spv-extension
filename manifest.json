@@ -13,11 +13,8 @@
         {
             "matches": [
                 "https://account.contapp.ro/*",
-                "https://api.contapp.ro/*",
                 "https://contabilitate.contapp.ro/*",
-                "https://crm.contapp.ro/*",
                 "https://declaratiaunica.contapp.ro/*",
-                "https://drive.contapp.ro/*",
                 "https://*.contapp.test/*",
                 "https://contapp.test/*"
             ],

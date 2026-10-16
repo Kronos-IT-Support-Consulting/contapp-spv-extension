@@ -266,7 +266,7 @@ fails on the missing `background.scripts` fallback and gecko id, which Chrome ne
 To try changes, load the repository folder unpacked in Chrome (it is Chrome-shaped as is and still matches the
 local `contapp.test` hosts), or `dist/firefox` in Firefox after `./build.sh`. Reload the extension and the
 ContApp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on
-`https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*`.
+`https://{account,contabilitate,declaratiaunica}.contapp.ro/*`.
 
 `npm test` runs the unit tests. `npm run test:e2e` loads `dist/chrome` (build first) into Playwright's Chromium,
 with every request answered by test routes; `npx playwright install chromium` fetches the browser once. CI runs both.
@@ -371,6 +371,6 @@ from other stores), so the Edge listing below is optional.
 
 ## Known limitations
 
-- The content script runs on `https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*`, and replies go to the whole page through `window.postMessage`: any
+- The content script runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and replies go to the whole page through `window.postMessage`: any
   script those pages load, third-party ones included, can drive the proxy and read the SPV answers. Keep those
   pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.

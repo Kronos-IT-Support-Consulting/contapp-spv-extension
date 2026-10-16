@@ -559,6 +559,9 @@ test("only the ContApp hosts the content script runs on may open a port", async 
         { id: EXTENSION_ID, url: "not a url" },
         { id: EXTENSION_ID, url: "https://contapp.ro/" },
         { id: EXTENSION_ID, url: "https://blog.contapp.ro/" },
+        { id: EXTENSION_ID, url: "https://crm.contapp.ro/" },
+        { id: EXTENSION_ID, url: "https://drive.contapp.ro/" },
+        { id: EXTENSION_ID, url: "https://api.contapp.ro/" },
         { id: EXTENSION_ID, url: "https://evil.contabilitate.contapp.ro/" },
         { id: EXTENSION_ID, url: "https://contabilitate.contapp.ro.evil.example/" },
         { id: EXTENSION_ID, url: "http://contabilitate.contapp.ro/" },
@@ -570,7 +573,7 @@ test("only the ContApp hosts the content script runs on may open a port", async 
     }
     assert.equal(fetchCalls.length, 0);
 
-    const hosts = ["account", "api", "contabilitate", "crm", "declaratiaunica", "drive"];
+    const hosts = ["account", "contabilitate", "declaratiaunica"];
     for (const url of [...hosts.map((host) => `https://${host}.contapp.ro/x?y`), "https://app.contapp.test/", "https://contapp.test/"]) {
         assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url }), { ok: true, version: "9.8.7" }, url);
     }

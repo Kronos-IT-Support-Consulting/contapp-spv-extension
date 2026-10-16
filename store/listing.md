@@ -129,7 +129,7 @@ ANAF's SPV web service only answers over mutual TLS and sends no CORS headers, s
 The other two parts of the patterns exist only for the login's cookie reset described under the cookies permission: chrome.cookies lists and removes a cookie only when the extension has host access to the cookie's domain, over http:// for a cookie without the Secure attribute, and to anaf.ro itself for a cookie set on .anaf.ro, which the browser also sends to webserviced.anaf.ro.
 ```
 
-Content script on `https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*`:
+Content script on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`:
 
 ```
 The content script is the bridge between the ContApp page and the service worker: it receives the page's requests through window.postMessage (same origin only), forwards them to the service worker and posts the answer back. It also marks the page (data-spv-extension attribute) so ContApp knows the extension is installed. It runs only on the ContApp application hosts, and the service worker refuses requests from any other page.
