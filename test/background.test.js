@@ -43,6 +43,7 @@ function loadBackground(fetchImpl, {
 
     const context = vm.createContext({
         URL,
+        atob,
         btoa,
         AbortController,
         // Recorded instead of scheduled, so a test fires the 90 s deadline when it wants to.
@@ -311,7 +312,7 @@ test("fetch refuses to run without the host permission, which Firefox lets the u
     const { send, fetchCalls } = loadBackground(unreachable, { granted: false });
     const response = await send({ type: "fetch", url: ANAF_URL });
 
-    assert.equal(response.error, "network");
+    assert.equal(response.error, "permission");
     assert.match(response.message, /permission for https:\/\/webserviced\.anaf\.ro\/\* is not granted/);
     assert.equal(fetchCalls.length, 0);
 });
@@ -386,18 +387,24 @@ test("a session reset that cannot run is reported and logged, and the tab still 
 
 test("login keeps a session the last fetch found alive, and clears one it found lost", async () => {
     const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" }];
+    const text = (body) => new TextEncoder().encode(body);
     const replies = [
+        respond(200, text(' {"mesaje":[]}'))(),
+        respond(200, text("%PDF-1.4"))(),
+        respond(200, text("<html></html>"), "https://webserviced.anaf.ro/my.policy")(),
+        respond(200, text("<html>Access denied</html>"))(),
         respond(200, new Uint8Array(0))(),
-        respond(200, new Uint8Array(0), "https://webserviced.anaf.ro/my.policy")(),
-        respond(500, new Uint8Array(0))(),
+        respond(500, text('{"eroare":"x"}'))(),
     ];
     const { send, removedCookies } = loadBackground(() => replies.shift(), { cookies });
 
-    await send({ type: "fetch", url: ANAF_URL });
-    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" });
+    for (const alive of ["JSON answer", "PDF download"]) {
+        await send({ type: "fetch", url: ANAF_URL });
+        assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, alive);
+    }
     assert.equal(removedCookies.length, 0, "another ContApp tab may be syncing with it");
 
-    for (const lost of ["redirected to F5", "HTTP 500"]) {
+    for (const lost of ["redirected to F5", "gateway page under the REST prefix", "empty body", "HTTP 500"]) {
         await send({ type: "fetch", url: ANAF_URL });
         assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, lost);
     }
@@ -416,7 +423,7 @@ test("login on a lost session cancels the fetches stuck on it", async () => {
     await stuck;
     assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
     assert.equal(signals[0].aborted, true);
-    assert.deepEqual(await reply, { ok: false, error: "network", message: "cancelled by the ANAF login" });
+    assert.deepEqual(await reply, { ok: false, error: "cancelled" });
 });
 
 test("login also cancels the fetches queued for a slot, and fetches sent during the reset wait for it", async () => {
@@ -442,7 +449,7 @@ test("login also cancels the fetches queued for a slot, and fetches sent during 
     // The freed slots must not go to the queued fetches while the dead session's cookies are still there.
     assert.equal(fetchCalls.length, 4);
     for (const reply of await Promise.all(stuck)) {
-        assert.deepEqual(reply, { ok: false, error: "network", message: "cancelled by the ANAF login" });
+        assert.deepEqual(reply, { ok: false, error: "cancelled" });
     }
 
     const late = send({ type: "fetch", url: ANAF_URL });
@@ -458,7 +465,7 @@ test("login also cancels the fetches queued for a slot, and fetches sent during 
     const again = send({ type: "login", url: ANAF_URL });
     finishReset();
     await again;
-    assert.deepEqual(await late, { ok: false, error: "network", message: "cancelled by the ANAF login" });
+    assert.deepEqual(await late, { ok: false, error: "cancelled" });
 });
 
 test("login opens a tab, and a tab that cannot be opened is a network error", async () => {

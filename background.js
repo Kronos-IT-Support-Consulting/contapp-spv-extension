@@ -15,7 +15,7 @@ const KEEP_ALIVE_MS = 25_000;
 // stops once the response headers arrive, so a slow download of a large but healthy response is not cut off.
 const FETCH_TIMEOUT_MS = 90_000;
 const TIMED_OUT = "timeout";
-const LOGIN_CANCELLED = "cancelled by the ANAF login";
+const LOGIN_CANCELLED = "cancelled";
 // Chrome opens at most six connections per host. Keeping two free lets the login tab through while
 // background fetches are stuck on a handshake; the rest wait for a slot.
 const MAX_CONCURRENT_FETCHES = 4;
@@ -51,6 +51,14 @@ function toBase64(buffer) {
 
 function networkError(reason) {
     return { ok: false, error: "network", message: String(reason?.message ?? reason) };
+}
+
+// The SPV REST API answers JSON or a PDF. An HTML page served under the prefix is the F5 gateway's, not a live
+// session, so it must not keep the cookies at the next login.
+function isRestAnswer(base64) {
+    const head = atob(base64.slice(0, 12)).trimStart();
+
+    return head.startsWith("{") || head.startsWith("[") || head.startsWith("%PDF");
 }
 
 function keepAlive() {
@@ -144,7 +152,7 @@ async function proxyFetch(url) {
     // MV3 host permissions are optional in Firefox, and Chrome withholds them under "on click" site access.
     // Without the grant, fetch fails with the same TypeError as a missing certificate.
     if (!(await chrome.permissions.contains(HOST_PERMISSION))) {
-        return networkError(`permission for ${HOST_PERMISSION.origins[0]} is not granted`);
+        return { ok: false, error: "permission", message: `permission for ${HOST_PERMISSION.origins[0]} is not granted` };
     }
 
     const stopKeepAlive = keepAlive();
@@ -161,7 +169,7 @@ async function proxyFetch(url) {
             await acquireSlot(controller.signal);
             holdsSlot = true;
         } catch {
-            return networkError(LOGIN_CANCELLED); // cancelled while it waited for a slot
+            return { ok: false, error: LOGIN_CANCELLED }; // cancelled while it waited for a slot
         }
 
         deadline = setTimeout(() => controller.abort(TIMED_OUT), FETCH_TIMEOUT_MS);
@@ -169,11 +177,11 @@ async function proxyFetch(url) {
         const reply = await fetchBody(url, controller.signal, () => clearTimeout(deadline));
 
         if (controller.signal.aborted && !reply.ok) {
-            return controller.signal.reason === TIMED_OUT ? { ok: false, error: "timeout" } : networkError(LOGIN_CANCELLED);
+            return { ok: false, error: controller.signal.reason === TIMED_OUT ? TIMED_OUT : LOGIN_CANCELLED };
         }
 
-        // A lost session redirects to F5's pages, so an answer still under the SPV prefix means it is alive.
-        sessionAlive = reply.ok && reply.status < 400 && reply.url.startsWith(ALLOWED_PREFIX);
+        // A lost session redirects to F5's pages, so a REST answer still under the SPV prefix means it is alive.
+        sessionAlive = reply.ok && reply.status < 400 && reply.url.startsWith(ALLOWED_PREFIX) && isRestAnswer(reply.body);
 
         return reply;
     } finally {
