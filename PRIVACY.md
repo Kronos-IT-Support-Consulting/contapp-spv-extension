@@ -1,6 +1,6 @@
 # Politica de confidențialitate — extensia ContApp SPV
 
-Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 14.10.2026 · [English version below](#privacy-policy--contapp-spv-extension)
+Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 16.10.2026 · [English version below](#privacy-policy--contapp-spv-extension)
 
 Această politică explică ce date prelucrează extensia de browser **ContApp SPV**, de ce, pe ce temei și ce drepturi
 aveți, conform art. 13 din Regulamentul (UE) 2016/679 (GDPR). Ea completează
@@ -107,7 +107,8 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](
 
 | Permisiune | De ce |
 |---|---|
-| Acces la `https://webserviced.anaf.ro/*` | Citește răspunsurile serviciului SPV al ANAF, pe care paginile web nu le pot citi direct. Extensia acceptă doar adrese care încep cu `https://webserviced.anaf.ro/SPVWS2/rest/`. |
+| Acces la `*://webserviced.anaf.ro/*` | Citește răspunsurile serviciului SPV al ANAF, pe care paginile web nu le pot citi direct. Extensia acceptă doar adrese care încep cu `https://webserviced.anaf.ro/SPVWS2/rest/`. Accesul cuprinde și `http://` numai pentru că altfel browserul nu îi arată extensiei cookie-urile ANAF fără atributul Secure; extensia nu face nicio cerere prin HTTP. |
+| Acces la `*://anaf.ro/*` | Folosit numai pentru cookie-uri: browserul îi arată extensiei și o lasă să șteargă un cookie setat pentru `.anaf.ro` (pe care îl trimite și către `webserviced.anaf.ro`) doar dacă are acces la `anaf.ro`. Extensia nu face nicio cerere către `anaf.ro`. |
 | Script de conținut pe `https://*.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
 | Cookie-uri (`cookies`) | Șterge cookie-urile pe care browserul le trimite către `webserviced.anaf.ro` înainte de deschiderea filei de autentificare ANAF, când sesiunea ANAF nu mai funcționează, ca o sesiune eșuată să nu blocheze o nouă autentificare. Nu folosește, nu salvează și nu transmite valorile cookie-urilor și nu atinge alte site-uri. |
 
@@ -148,7 +149,7 @@ nouă a extensiei ar prelucra date în alt mod, actualizăm politica înainte de
 
 # Privacy policy — ContApp SPV extension
 
-Effective date: 14 October 2026 · Last updated: 14 October 2026
+Effective date: 14 October 2026 · Last updated: 16 October 2026
 
 This policy explains what data the **ContApp SPV** browser extension processes, why, on what legal basis and what
 rights you have, under Article 13 of Regulation (EU) 2016/679 (GDPR). It supplements the
@@ -249,7 +250,8 @@ only accepts requests from ContApp pages and only for addresses in ANAF's SPV se
 
 | Permission | Why |
 |---|---|
-| Host access to `https://webserviced.anaf.ro/*` | Reads responses from ANAF's SPV service, which web pages cannot read directly. The extension only accepts addresses starting with `https://webserviced.anaf.ro/SPVWS2/rest/`. |
+| Host access to `*://webserviced.anaf.ro/*` | Reads responses from ANAF's SPV service, which web pages cannot read directly. The extension only accepts addresses starting with `https://webserviced.anaf.ro/SPVWS2/rest/`. The access covers `http://` only because the browser otherwise hides ANAF cookies without the Secure attribute from the extension; it makes no HTTP requests. |
+| Host access to `*://anaf.ro/*` | Used only for cookies: the browser lists a cookie set on `.anaf.ro` (which it also sends to `webserviced.anaf.ro`) to the extension, and lets it delete one, only with access to `anaf.ro`. The extension makes no requests to `anaf.ro`. |
 | Content script on `https://*.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
 | Cookies (`cookies`) | Deletes the cookies the browser sends to `webserviced.anaf.ro` before the ANAF login tab opens, when the ANAF session no longer works, so a failed session cannot block a new login. It does not use, store or transmit cookie values and touches no other site. |
 

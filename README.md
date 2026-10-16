@@ -333,7 +333,7 @@ from other stores), so the Edge listing below is optional.
 
 - [x] Privacy policy: [PRIVACY.md](PRIVACY.md), served by GitHub Pages at <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>.
 - [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for the
-      `webserviced.anaf.ro` host permission, data-usage disclosure matching the privacy policy.
+      `webserviced.anaf.ro` and `anaf.ro` host permissions, data-usage disclosure matching the privacy policy.
 - [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.

@@ -2,6 +2,9 @@ const ANAF_HOST = "webserviced.anaf.ro";
 const ANAF_DOMAIN = "anaf.ro";
 const ALLOWED_PREFIX = `https://${ANAF_HOST}/SPVWS2/rest/`;
 const HOST_PERMISSION = { origins: [`https://${ANAF_HOST}/*`] };
+// Chrome only lists or removes a cookie when the extension has access to the cookie's domain, over http:// for one
+// without the Secure flag; a cookie set on .anaf.ro needs access to anaf.ro itself.
+const COOKIE_PERMISSION = { origins: [`*://${ANAF_HOST}/*`, `*://${ANAF_DOMAIN}/*`] };
 const CHUNK_SIZE = 0x8000;
 // Chrome refuses runtime messages over 64 MiB; base64 adds a third, the reply envelope a few bytes.
 const MAX_BODY_BYTES = 47 * 1024 * 1024;
@@ -56,20 +59,42 @@ function keepAlive() {
     return () => clearInterval(timer);
 }
 
-// Fetches holding a connection slot, so a login can cancel them; `running` counts them, `waiting` queues the rest.
+// Every pending fetch, holding a slot or waiting for one, so a login can cancel them; `running` counts the slots
+// in use, `waiting` queues the rest.
 const inFlight = new Set();
 const waiting = [];
 let running = 0;
 // Whether the last completed fetch got an SPV answer; unknown after the worker restarts, which counts as lost.
 let sessionAlive = false;
+// Settles once the login's cookie reset is done; a fetch started earlier would go out with the dead session.
+let sessionReset = Promise.resolve();
 
 // A freed slot passes straight to the next waiter without dropping `running`, so a newcomer cannot take it too.
-async function acquireSlot() {
+// Rejects with the abort reason when the fetch is cancelled first, leaving the slot to the others.
+function acquireSlot(signal) {
+    if (signal.aborted) {
+        return Promise.reject(signal.reason);
+    }
+
     if (running < MAX_CONCURRENT_FETCHES) {
         running++;
-    } else {
-        await new Promise((resolve) => waiting.push(resolve));
+
+        return Promise.resolve();
     }
+
+    return new Promise((resolve, reject) => {
+        const take = () => {
+            signal.removeEventListener("abort", cancel);
+            resolve();
+        };
+        const cancel = () => {
+            waiting.splice(waiting.indexOf(take), 1);
+            reject(signal.reason);
+        };
+
+        waiting.push(take);
+        signal.addEventListener("abort", cancel, { once: true });
+    });
 }
 
 function releaseSlot() {
@@ -125,11 +150,20 @@ async function proxyFetch(url) {
     const stopKeepAlive = keepAlive();
     const controller = new AbortController();
     let deadline;
+    let holdsSlot = false;
 
-    await acquireSlot();
     inFlight.add(controller);
 
     try {
+        await sessionReset;
+
+        try {
+            await acquireSlot(controller.signal);
+            holdsSlot = true;
+        } catch {
+            return networkError(LOGIN_CANCELLED); // cancelled while it waited for a slot
+        }
+
         deadline = setTimeout(() => controller.abort(TIMED_OUT), FETCH_TIMEOUT_MS);
 
         const reply = await fetchBody(url, controller.signal, () => clearTimeout(deadline));
@@ -145,7 +179,9 @@ async function proxyFetch(url) {
     } finally {
         clearTimeout(deadline);
         inFlight.delete(controller);
-        releaseSlot();
+        if (holdsSlot) {
+            releaseSlot();
+        }
         stopKeepAlive();
     }
 }
@@ -167,8 +203,8 @@ function reachesAnafHost({ domain, hostOnly }) {
 // After a failed certificate or PIN check ANAF's F5 gateway keeps answering the dead session's cookie with its
 // error page, so the login tab starts from no cookie at all. The values are only passed back to remove.
 async function forgetAnafSession() {
-    if (!(await chrome.permissions.contains(HOST_PERMISSION))) {
-        throw new Error(`permission for ${HOST_PERMISSION.origins[0]} is not granted`);
+    if (!(await chrome.permissions.contains(COOKIE_PERMISSION))) {
+        throw new Error(`permission for ${COOKIE_PERMISSION.origins.join(" and ")} is not granted`);
     }
 
     const cookies = (await chrome.cookies.getAll(cookieQuery())).filter(reachesAnafHost);
@@ -184,7 +220,8 @@ async function forgetAnafSession() {
 }
 
 // A live session is kept: another ContApp tab may be syncing with it. A lost one is cleared, and the fetches still
-// stuck on it are cancelled so they stop holding connections the login tab needs.
+// stuck on it or queued behind them are cancelled so they stop holding connections the login tab needs. Fetches
+// that arrive during the reset wait for it.
 async function resetLostSession() {
     if (sessionAlive) {
         return { reset: "kept" };
@@ -194,8 +231,11 @@ async function resetLostSession() {
         controller.abort(LOGIN_CANCELLED);
     }
 
+    const reset = forgetAnafSession();
+    sessionReset = reset.catch(() => {});
+
     try {
-        await forgetAnafSession();
+        await reset;
 
         return { reset: "cleared" };
     } catch (error) {
