@@ -69,7 +69,7 @@ but the SPV responses it relays carry the certificate holder's CNP, CUIs and tax
 then stores in the user's account, and Mozilla counts data handed outside the add-on as collection. Firefox 140+
 shows this in the install prompt, hence `strict_min_version: "140.0"`. Firefox also lets the user revoke the ANAF
 host permission at any time (*about:addons* → ContApp SPV → the permissions tab); the extension then answers
-`network` with the message `permission for https://webserviced.anaf.ro/* is not granted`. The manifest declares no
+`permission` with the message `permission for https://webserviced.anaf.ro/* is not granted`. The manifest declares no
 `gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
 advisory warning about the Android minimum version, which is expected.
 
@@ -91,7 +91,7 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 | `{type:"ping"}` | `{ok:true, version}` |
 | `{type:"fetch", url}` | `{ok:true, status, url, body}` with `body` an ArrayBuffer (structured clone) |
 | `{type:"login", url}` | `{ok:true, reset, message?}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
-| any | `{ok:false, error:"certificate_required"\|"timeout"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
+| any | `{ok:false, error:"certificate_required"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
@@ -100,11 +100,14 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
   prompt that never showed. The request is aborted so it stops holding one of Chrome's six connections to the host.
   Once the headers arrive the deadline stops, so a slow download of a large response is not cut off. The page
   should offer the `login` action.
+- `cancelled`: a `login` reset the lost session while this fetch was in flight or queued. Not a failure to show:
+  run the request again once the user is back from the login tab.
+- `permission`: the extension has no access to `webserviced.anaf.ro` (revoked in Firefox, or Chrome's site access
+  set to "on click"); `message` names the missing grant. The page should ask the user to grant site access.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the SPV REST prefix
   (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
-  response too large to hand over (above 47 MiB), a host permission the user revoked, a login tab that could
-  not be opened, and a fetch cancelled by a login (`cancelled by the ANAF login`).
+  response too large to hand over (above 47 MiB) and a login tab that could not be opened.
 - `extension`: the content script got no usable answer from the service worker (extension reloaded or updated,
   or a service worker that died mid-request). Retry once; if it persists, reload the ContApp page.
 - `unknown_type`: the `type` is none of the above.
@@ -114,7 +117,7 @@ so two stay free for the login tab even when every fetch is stuck on a handshake
 
 `reset` in the login reply says what happened to the ANAF session before the tab opened:
 
-- `kept`: the last fetch got an answer from the SPV REST API, so the session is alive and is left alone (another
+- `kept`: the last fetch got a JSON or PDF answer from the SPV REST API, so the session is alive and is left alone (another
   ContApp tab may be syncing with it).
 - `cleared`: the session was lost, or unknown after the service worker restarted. Every cookie the browser sends to
   `webserviced.anaf.ro` was deleted, including those set on `.anaf.ro` and partitioned ones, and fetches still in

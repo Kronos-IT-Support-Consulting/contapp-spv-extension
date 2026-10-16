@@ -6,6 +6,48 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- A fetch cancelled by a login answers `cancelled` instead of `network` with the message
+  `cancelled by the ANAF login`, and a fetch without the ANAF host permission answers `permission` instead of
+  `network`, so the page can tell them apart without matching text.
+- A session only counts as alive (and is kept at the next `login`) when the last fetch got a JSON or PDF answer:
+  an HTML page the F5 gateway serves under the SPV prefix now clears the cookies like a redirect does.
+
+## [1.4.0] — 2026-10-16
+
+### Fixed
+
+- The login's cookie reset can see and delete every ANAF session cookie in Chrome: the extension now has host
+  access to `anaf.ro` (for cookies set on `.anaf.ro`) and over `http://` (for cookies without the Secure attribute),
+  without which Chrome leaves those cookies out of `cookies.getAll`. It still only requests
+  `https://webserviced.anaf.ro/SPVWS2/rest/`.
+- A login on a lost session also cancels the fetches queued behind the stuck ones, and fetches sent while the
+  cookies are being cleared wait for it, so none goes out with the dead session.
+
+### Security
+
+- Release workflow: the GitHub token reaches only the two steps that call `gh` and is no longer written into
+  `.git/config`, `npm ci` runs with `--ignore-scripts`, and actions are pinned to commit SHAs.
+
+## [1.3.0] — 2026-10-16
+
+### Changed
+
+- A fetch that gets no response headers within 90 s answers `timeout`. A handshake stuck on a certificate picker or
+  PIN prompt that never showed used to hang forever and hold one of the browser's connections to ANAF, so after a
+  few retries every request, the login tab included, queued behind them until the browser restarted. Once the
+  headers arrive the deadline stops, so a slow download of a large response is not cut off.
+- At most four fetches use the network at once; the rest wait, so two of Chrome's six connections per host stay
+  free for the login tab.
+- `login` resets a lost ANAF session before it opens the tab: it deletes the browser's `webserviced.anaf.ro`
+  cookies and cancels the fetches still stuck on it, so a session ANAF's gateway marked as failed no longer sends
+  every new login to its error page. A live session is kept. The reply carries `reset: "kept" | "cleared" |
+  "failed"`. This adds the `cookies` permission.
+- Chrome and Edge 119 are the minimum versions.
+
+## [1.2.0] — 2026-10-14
+
 ### Security
 
 - URLs are parsed and normalised before the SPV prefix check, so `…/SPVWS2/rest/../x` no longer reaches another
@@ -18,11 +60,6 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- A fetch gives up after 90 s and answers `timeout`. A handshake stuck on a certificate picker or PIN prompt that
-  never showed used to hang forever and hold one of the browser's connections to ANAF, so after a few retries
-  every request, the login tab included, queued behind them until the browser restarted.
-- `login` deletes the browser's `webserviced.anaf.ro` cookies before it opens the tab, so a session ANAF's gateway
-  marked as failed no longer sends every new login to its error page. This adds the `cookies` permission.
 - The Firefox build declares `data_collection_permissions` as personally identifying and financial information
   (the relayed SPV responses), which Firefox 140+ shows in the install prompt; Firefox 140 and Chrome 110 are the
   minimum versions.
@@ -39,12 +76,6 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
-- The login's cookie reset can see and delete every ANAF session cookie in Chrome: the extension now has host
-  access to `anaf.ro` (for cookies set on `.anaf.ro`) and over `http://` (for cookies without the Secure attribute),
-  without which Chrome leaves those cookies out of `cookies.getAll`. It still only requests
-  `https://webserviced.anaf.ro/SPVWS2/rest/`.
-- A login on a lost session also cancels the fetches queued behind the stuck ones, and fetches sent while the
-  cookies are being cleared wait for it, so none goes out with the dead session.
 - A reply the content script cannot decode now answers `extension` instead of leaving the page waiting forever.
 - Sandboxed (opaque-origin) ContApp documents get no bridge instead of a bridge whose replies throw.
 
@@ -81,6 +112,9 @@ First standalone release, moved out of the ContApp application repository.
   `forbidden_url`.
 - Chrome/Edge and Firefox builds, zipped by `build.sh` and attached to each GitHub release.
 
-[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/tag/v1.0.0
