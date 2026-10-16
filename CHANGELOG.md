@@ -8,11 +8,34 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- The content script only runs on `https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*`, and the service worker only answers this extension's content script on
+  those hosts (`forbidden_origin` otherwise).
+- Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or
+  navigates away aborts its fetches, so they stop holding a connection slot.
+- A fetch that ends outside the SPV REST API (F5's login pages, or anything over `http://`), or a `2xx`/`3xx` answer
+  under it that is neither JSON nor a PDF, answers `session_lost` without a body instead of `ok:true`.
+- A ContApp tab left open across an extension update or reload answers `extension_reloaded` and detaches, instead of
+  `extension` on every request.
+- A failed fetch while the browser is offline answers `network` (`offline`) instead of `certificate_required`.
+
 - A fetch cancelled by a login answers `cancelled` instead of `network` with the message
   `cancelled by the ANAF login`, and a fetch without the ANAF host permission answers `permission` instead of
   `network`, so the page can tell them apart without matching text.
 - A session only counts as alive (and is kept at the next `login`) when the last fetch got a JSON or PDF answer:
   an HTML page the F5 gateway serves under the SPV prefix now clears the cookies like a redirect does.
+
+### Fixed
+
+- A response body that stalls after the headers times out after 5 minutes instead of holding its slot and keeping
+  the service worker awake for good.
+- A JSON answer that starts with a byte order mark or more than a few blank bytes counts as a live session.
+
+### Security
+
+- Release workflow: the zips are built before any dependency code runs, checked against their recorded SHA-256
+  before every upload, and published from a job in the `store` environment; `GH_TOKEN` no longer reaches
+  `web-ext sign`.
+- Release zips are reproducible: file times are the commit time and entries are sorted.
 
 ## [1.4.0] — 2026-10-16
 

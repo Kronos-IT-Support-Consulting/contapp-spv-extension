@@ -10,11 +10,13 @@ const ORIGIN = "https://app.contapp.ro";
 // Objects built inside the vm realm have a foreign prototype; clone them before deepEqual.
 const plain = (value) => structuredClone(value);
 
-// Runs content.js in its own realm. `sendMessage(message)` plays the service worker; what the page posts
-// is collected in `posted`, what reaches the worker in `sent`.
-function loadContent(sendMessage, { origin = ORIGIN } = {}) {
+// Runs content.js in its own realm. `worker(message)` plays the service worker at the other end of each port: its
+// result is posted back, and a throw disconnects the port without an answer, as a worker that dies does. What the
+// page posts is collected in `posted`, what reaches the worker in `sent`, the ports opened in `ports`.
+function loadContent(worker, { origin = ORIGIN } = {}) {
     const posted = [];
     const sent = [];
+    const ports = [];
     let onMessage;
 
     const window = {
@@ -22,7 +24,35 @@ function loadContent(sendMessage, { origin = ORIGIN } = {}) {
             assert.equal(type, "message");
             onMessage = handler;
         },
+        removeEventListener: (type, handler) => {
+            assert.equal(type, "message");
+            if (handler === onMessage) {
+                onMessage = undefined;
+            }
+        },
         postMessage: (data, targetOrigin, transfer) => posted.push({ data, targetOrigin, transfer }),
+    };
+
+    const connect = ({ name }) => {
+        const listeners = { message: [], disconnect: [] };
+        const port = {
+            name,
+            disconnected: false,
+            postMessage: (message) => {
+                sent.push(plain(message));
+                Promise.resolve().then(() => worker(message)).then(
+                    (response) => port.disconnected || listeners.message.forEach((callback) => callback(response)),
+                    () => port.disconnected || listeners.disconnect.forEach((callback) => callback()),
+                );
+            },
+            disconnect: () => (port.disconnected = true),
+            onMessage: { addListener: (callback) => listeners.message.push(callback) },
+            onDisconnect: { addListener: (callback) => listeners.disconnect.push(callback) },
+        };
+
+        ports.push(port);
+
+        return port;
     };
 
     const context = vm.createContext({
@@ -31,23 +61,15 @@ function loadContent(sendMessage, { origin = ORIGIN } = {}) {
         location: { origin },
         document: { documentElement: { dataset: {} } },
         console: { debug() {} },
-        chrome: {
-            runtime: {
-                getManifest: () => ({ version: "9.8.7" }),
-                sendMessage: async (message) => {
-                    sent.push(plain(message));
-
-                    return sendMessage(message);
-                },
-            },
-        },
+        chrome: { runtime: { id: "spv-extension-id", getManifest: () => ({ version: "9.8.7" }), connect } },
     });
 
     vm.runInContext(source, context);
 
-    const dispatch = onMessage && ((data, event = {}) => onMessage({ data, source: window, origin, ...event }));
+    const listening = () => onMessage !== undefined;
+    const dispatch = (data, event = {}) => onMessage?.({ data, source: window, origin, ...event });
 
-    return { context, dispatch, posted, sent };
+    return { context, dispatch, listening, posted, sent, ports };
 }
 
 const request = { channel: "contapp-spv", id: "42", type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/x" };
@@ -61,10 +83,10 @@ test("exposes the extension version on the html element", () => {
 });
 
 test("installs nothing on a sandboxed page, whose opaque origin could not be checked", () => {
-    const { context, dispatch } = loadContent(() => assert.fail("must not relay"), { origin: "null" });
+    const { context, listening } = loadContent(() => assert.fail("must not relay"), { origin: "null" });
 
     assert.equal(context.document.documentElement.dataset.spvExtension, undefined);
-    assert.equal(dispatch, undefined);
+    assert.equal(listening(), false);
 });
 
 test("ignores everything that is not a request from this page", async () => {
@@ -136,6 +158,7 @@ test("matches concurrent replies to their requests in completion order", async (
 
     const first = dispatch({ ...request, id: "first", url: `${request.url}1` });
     const second = dispatch({ ...request, id: "second", url: `${request.url}2` });
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(posted.length, 0);
 
     pending.get(`${request.url}2`)(bodyOf("two"));
@@ -163,5 +186,57 @@ test("answers extension when the service worker is unreachable, silent, not an o
         await dispatch(request);
 
         assert.deepEqual(plain(posted[0].data), { ok: false, error: "extension", ...envelope });
+    }
+});
+
+test("each request gets its own port, closed once the answer is in", async () => {
+    const { dispatch, ports } = loadContent(() => ({ ok: true }));
+
+    await dispatch(request);
+    await dispatch({ ...request, id: "43" });
+
+    assert.deepEqual(ports.map(({ name, disconnected }) => [name, disconnected]), [["contapp-spv", true], ["contapp-spv", true]]);
+});
+
+test("cancel closes the request's port and answers it cancelled, and gets no reply of its own", async () => {
+    const { dispatch, ports, posted } = loadContent(() => new Promise(() => {}));
+    const pending = dispatch(request);
+
+    await dispatch({ channel: "contapp-spv", id: "unknown", type: "cancel" });
+    assert.equal(posted.length, 0);
+
+    await dispatch({ channel: "contapp-spv", id: request.id, type: "cancel" });
+    await pending;
+
+    assert.equal(ports[0].disconnected, true);
+    assert.deepEqual(plain(posted.map((p) => p.data)), [{ ok: false, error: "cancelled", ...envelope }]);
+});
+
+test("once the extension is reloaded or updated, the stale script answers extension_reloaded and detaches", async () => {
+    const ways = [
+        ["before the request", (chrome) => delete chrome.runtime.id],
+        ["runtime gone entirely", (chrome) => delete chrome.runtime],
+        ["while connecting", (chrome) => {
+            chrome.runtime.connect = () => {
+                delete chrome.runtime.id;
+                throw new Error("Extension context invalidated.");
+            };
+        }],
+        // The port drops without an answer and the runtime is gone by the time the script looks.
+        ["mid-request", null],
+    ];
+
+    for (const [name, lose] of ways) {
+        const loaded = loadContent(() => {
+            delete loaded.context.chrome.runtime.id;
+            throw new Error("port closed");
+        });
+        lose?.(loaded.context.chrome);
+
+        await loaded.dispatch(request);
+
+        assert.deepEqual(plain(loaded.posted.map((p) => p.data)), [{ ok: false, error: "extension_reloaded", ...envelope }], name);
+        assert.equal(loaded.context.document.documentElement.dataset.spvExtension, undefined, name);
+        assert.equal(loaded.listening(), false, name);
     }
 });

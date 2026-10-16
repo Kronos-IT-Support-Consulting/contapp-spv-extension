@@ -11,11 +11,15 @@ const MAX_BODY_BYTES = 47 * 1024 * 1024;
 // Chrome stops an idle MV3 service worker after 30 s. A pending fetch is not activity, an API call is.
 const KEEP_ALIVE_MS = 25_000;
 // A TLS handshake waiting on a certificate picker or PIN prompt that never shows hangs forever and holds one of
-// Chrome's six connections to the host; after a few retries even the login tab queues behind them. The deadline
-// stops once the response headers arrive, so a slow download of a large but healthy response is not cut off.
+// Chrome's six connections to the host; after a few retries even the login tab queues behind them. Once the
+// response headers arrive the body gets a longer deadline of its own, so a slow download of a large but healthy
+// response is not cut off while a body that stalls for good still frees its slot.
 const FETCH_TIMEOUT_MS = 90_000;
+const BODY_TIMEOUT_MS = 5 * 60_000;
 const TIMED_OUT = "timeout";
-const LOGIN_CANCELLED = "cancelled";
+const CANCELLED = "cancelled";
+const SESSION_LOST = "session_lost";
+const PORT_NAME = "contapp-spv";
 // Chrome opens at most six connections per host. Keeping two free lets the login tab through while
 // background fetches are stuck on a handshake; the rest wait for a slot.
 const MAX_CONCURRENT_FETCHES = 4;
@@ -54,11 +58,35 @@ function networkError(reason) {
 }
 
 // The SPV REST API answers JSON or a PDF. An HTML page served under the prefix is the F5 gateway's, not a live
-// session, so it must not keep the cookies at the next login.
-function isRestAnswer(base64) {
-    const head = atob(base64.slice(0, 12)).trimStart();
+// session. TextDecoder drops a UTF-8 byte order mark; the prefix is long enough for leading whitespace.
+function isRestAnswer(buffer) {
+    const head = new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 1024))).trimStart();
 
     return head.startsWith("{") || head.startsWith("[") || head.startsWith("%PDF");
+}
+
+// Only the ContApp hosts the content script runs on may drive the worker. The patterns come from the manifest, so
+// the release build, which drops the development hosts, accepts exactly what it injects into.
+function fromContApp(sender) {
+    let url;
+
+    try {
+        url = new URL(sender.url);
+    } catch {
+        return false;
+    }
+
+    if (sender.id !== chrome.runtime.id || url.protocol !== "https:") {
+        return false;
+    }
+
+    const { hostname } = url;
+
+    return chrome.runtime.getManifest().content_scripts.flatMap(({ matches }) => matches).some((pattern) => {
+        const host = pattern.match(/^https:\/\/([^/]+)\/\*$/)?.[1];
+
+        return host?.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
+    });
 }
 
 function keepAlive() {
@@ -123,9 +151,10 @@ async function fetchBody(url, signal, onHeaders) {
         onHeaders();
     } catch (error) {
         // An abort is a DOMException, so it lands here; proxyFetch tells the page why from signal.reason.
-        // Chrome reports a missing client certificate (ERR_SSL_CLIENT_AUTH_CERT_NEEDED) as a bare TypeError.
+        // Chrome reports a missing client certificate (ERR_SSL_CLIENT_AUTH_CERT_NEEDED) as a bare TypeError, and so
+        // every other network failure: only being offline can be told apart.
         if (error instanceof TypeError) {
-            return { ok: false, error: "certificate_required" };
+            return navigator.onLine === false ? networkError("offline") : { ok: false, error: "certificate_required" };
         }
 
         console.debug("ContApp SPV fetch failed", error);
@@ -133,11 +162,24 @@ async function fetchBody(url, signal, onHeaders) {
         return networkError(error);
     }
 
+    // A lost session redirects to F5's login pages. Whatever ends up outside the SPV REST API, plain http:// included,
+    // is not read, let alone handed to the page.
+    if (!allowedUrl(response.url)) {
+        response.body?.cancel().catch(() => {});
+
+        return { ok: false, error: SESSION_LOST };
+    }
+
     try {
         const buffer = await response.arrayBuffer();
 
         if (buffer.byteLength > MAX_BODY_BYTES) {
             return networkError(`response of ${buffer.byteLength} bytes is too large to pass to the page`);
+        }
+
+        // The gateway can also answer under the prefix, with its own HTML page.
+        if (response.status < 400 && !isRestAnswer(buffer)) {
+            return { ok: false, error: SESSION_LOST };
         }
 
         return { ok: true, status: response.status, url: response.url, body: toBase64(buffer) };
@@ -148,7 +190,8 @@ async function fetchBody(url, signal, onHeaders) {
     }
 }
 
-async function proxyFetch(url) {
+// `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every fetch.
+async function proxyFetch(url, controller) {
     // MV3 host permissions are optional in Firefox, and Chrome withholds them under "on click" site access.
     // Without the grant, fetch fails with the same TypeError as a missing certificate.
     if (!(await chrome.permissions.contains(HOST_PERMISSION))) {
@@ -156,7 +199,6 @@ async function proxyFetch(url) {
     }
 
     const stopKeepAlive = keepAlive();
-    const controller = new AbortController();
     let deadline;
     let holdsSlot = false;
 
@@ -169,19 +211,23 @@ async function proxyFetch(url) {
             await acquireSlot(controller.signal);
             holdsSlot = true;
         } catch {
-            return { ok: false, error: LOGIN_CANCELLED }; // cancelled while it waited for a slot
+            return { ok: false, error: CANCELLED }; // cancelled while it waited for a slot
         }
 
-        deadline = setTimeout(() => controller.abort(TIMED_OUT), FETCH_TIMEOUT_MS);
+        const abortAfter = (ms) => setTimeout(() => controller.abort(TIMED_OUT), ms);
+        deadline = abortAfter(FETCH_TIMEOUT_MS);
 
-        const reply = await fetchBody(url, controller.signal, () => clearTimeout(deadline));
+        const reply = await fetchBody(url, controller.signal, () => {
+            clearTimeout(deadline);
+            deadline = abortAfter(BODY_TIMEOUT_MS);
+        });
 
         if (controller.signal.aborted && !reply.ok) {
-            return { ok: false, error: controller.signal.reason === TIMED_OUT ? TIMED_OUT : LOGIN_CANCELLED };
+            return { ok: false, error: controller.signal.reason === TIMED_OUT ? TIMED_OUT : CANCELLED };
         }
 
-        // A lost session redirects to F5's pages, so a REST answer still under the SPV prefix means it is alive.
-        sessionAlive = reply.ok && reply.status < 400 && reply.url.startsWith(ALLOWED_PREFIX) && isRestAnswer(reply.body);
+        // fetchBody only answers ok for a REST answer under the SPV prefix.
+        sessionAlive = reply.ok && reply.status < 400;
 
         return reply;
     } finally {
@@ -236,7 +282,7 @@ async function resetLostSession() {
     }
 
     for (const controller of inFlight) {
-        controller.abort(LOGIN_CANCELLED);
+        controller.abort(CANCELLED);
     }
 
     const reset = forgetAnafSession();
@@ -260,14 +306,14 @@ async function openLogin(url) {
     return { ok: true, ...outcome };
 }
 
-async function handle(message) {
+async function handle(message, controller) {
     const url = allowedUrl(message?.url);
 
     switch (message?.type) {
         case "ping":
             return { ok: true, version: chrome.runtime.getManifest().version };
         case "fetch":
-            return url ? proxyFetch(url) : { ok: false, error: "forbidden_url" };
+            return url ? proxyFetch(url, controller) : { ok: false, error: "forbidden_url" };
         case "login":
             return url ? openLogin(url) : { ok: false, error: "forbidden_url" };
         default:
@@ -275,11 +321,36 @@ async function handle(message) {
     }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    handle(message).then(sendResponse, (error) => {
-        console.debug("ContApp SPV handler failed", error);
-        sendResponse(networkError(error));
-    });
+// One port per request: the content script closes it when the page cancels the request or goes away, which aborts
+// the fetch so it stops holding a slot and keeping the worker awake.
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== PORT_NAME) {
+        return;
+    }
 
-    return true;
+    if (!fromContApp(port.sender)) {
+        port.postMessage({ ok: false, error: "forbidden_origin" });
+        port.disconnect();
+
+        return;
+    }
+
+    const controller = new AbortController();
+    let closed = false;
+    const answer = (reply) => {
+        if (!closed) {
+            port.postMessage(reply);
+        }
+    };
+
+    port.onDisconnect.addListener(() => {
+        closed = true;
+        controller.abort(CANCELLED);
+    });
+    port.onMessage.addListener((message) => {
+        handle(message, controller).then(answer, (error) => {
+            console.debug("ContApp SPV handler failed", error);
+            answer(networkError(error));
+        });
+    });
 });

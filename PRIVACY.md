@@ -99,8 +99,12 @@ contractuale standard) sunt descrise în
 
 ## 7. Securitate
 
-Toate conexiunile folosesc HTTPS. Conexiunea cu ANAF este autentificată cu certificatul dumneavoastră calificat.
-Extensia acceptă cereri numai de la paginile ContApp și numai pentru adrese din serviciul SPV al ANAF. Codul sursă
+Extensia face cereri numai prin HTTPS, iar conexiunea cu ANAF este autentificată cu certificatul dumneavoastră
+calificat. Dacă ANAF redirecționează o cerere în afara serviciului SPV (de exemplu către o adresă HTTP), extensia nu
+citește răspunsul și nu îl transmite paginii. Extensia acceptă cereri numai de la paginile aplicațiilor ContApp
+(`account`, `api`, `contabilitate`, `crm`, `declaratiaunica` și `drive`.contapp.ro) și numai pentru adrese din
+serviciul SPV al ANAF. Răspunsurile ajung la pagina ContApp care le-a cerut, unde le pot vedea și scripturile
+încărcate de acea pagină; ContApp răspunde pentru scripturile pe care le include. Codul sursă
 este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension).
 
 ## 8. Permisiunile extensiei
@@ -109,7 +113,7 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](
 |---|---|
 | Acces la `*://webserviced.anaf.ro/*` | Citește răspunsurile serviciului SPV al ANAF, pe care paginile web nu le pot citi direct. Extensia acceptă doar adrese care încep cu `https://webserviced.anaf.ro/SPVWS2/rest/`. Accesul cuprinde și `http://` numai pentru că altfel browserul nu îi arată extensiei cookie-urile ANAF fără atributul Secure; extensia nu face nicio cerere prin HTTP. |
 | Acces la `*://anaf.ro/*` | Folosit numai pentru cookie-uri: browserul îi arată extensiei și o lasă să șteargă un cookie setat pentru `.anaf.ro` (pe care îl trimite și către `webserviced.anaf.ro`) doar dacă are acces la `anaf.ro`. Extensia nu face nicio cerere către `anaf.ro`. |
-| Script de conținut pe `https://*.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
+| Script de conținut pe `https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
 | Cookie-uri (`cookies`) | Șterge cookie-urile pe care browserul le trimite către `webserviced.anaf.ro` înainte de deschiderea filei de autentificare ANAF, când sesiunea ANAF nu mai funcționează, ca o sesiune eșuată să nu blocheze o nouă autentificare. Nu folosește, nu salvează și nu transmite valorile cookie-urilor și nu atinge alte site-uri. |
 
 Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa SPV, ca browserul să poată afișa alegerea
@@ -242,8 +246,12 @@ are described in the [ContApp privacy policy](https://contapp.ro/politica-de-con
 
 ## 7. Security
 
-All connections use HTTPS. The connection to ANAF is authenticated with your qualified certificate. The extension
-only accepts requests from ContApp pages and only for addresses in ANAF's SPV service. The source code is public at
+The extension only makes HTTPS requests, and the connection to ANAF is authenticated with your qualified
+certificate. If ANAF redirects a request outside the SPV service (to an HTTP address, for example), the extension
+neither reads the response nor passes it to the page. The extension only accepts requests from the ContApp
+application pages (`account`, `api`, `contabilitate`, `crm`, `declaratiaunica` and `drive`.contapp.ro) and only for
+addresses in ANAF's SPV service. Answers go to the ContApp page that asked, where scripts that page loads can see
+them too; ContApp is responsible for the scripts it includes. The source code is public at
 [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension).
 
 ## 8. Extension permissions
@@ -252,7 +260,7 @@ only accepts requests from ContApp pages and only for addresses in ANAF's SPV se
 |---|---|
 | Host access to `*://webserviced.anaf.ro/*` | Reads responses from ANAF's SPV service, which web pages cannot read directly. The extension only accepts addresses starting with `https://webserviced.anaf.ro/SPVWS2/rest/`. The access covers `http://` only because the browser otherwise hides ANAF cookies without the Secure attribute from the extension; it makes no HTTP requests. |
 | Host access to `*://anaf.ro/*` | Used only for cookies: the browser lists a cookie set on `.anaf.ro` (which it also sends to `webserviced.anaf.ro`) to the extension, and lets it delete one, only with access to `anaf.ro`. The extension makes no requests to `anaf.ro`. |
-| Content script on `https://*.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
+| Content script on `https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
 | Cookies (`cookies`) | Deletes the cookies the browser sends to `webserviced.anaf.ro` before the ANAF login tab opens, when the ANAF session no longer works, so a failed session cannot block a new login. It does not use, store or transmit cookie values and touches no other site. |
 
 To authenticate at ANAF, the extension opens a new tab on the SPV address so the browser can show the certificate

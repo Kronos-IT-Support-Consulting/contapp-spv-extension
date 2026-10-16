@@ -8,6 +8,9 @@ const root = path.join(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "background.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const ANAF_URL = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
+const EXTENSION_ID = "spv-extension-id";
+const CONTAPP = { id: EXTENSION_ID, url: "https://contabilitate.contapp.ro/spv" };
+const JSON_BODY = new TextEncoder().encode('{"mesaje":[]}');
 
 // Whether a host permission pattern such as "*://anaf.ro/*" covers the origin of `url`.
 const permits = (pattern, url) => {
@@ -26,7 +29,7 @@ const cookieUrl = ({ domain, secure }) => `${secure ? "https" : "http"}://${doma
 // `context` lets a test throw the realm's own error classes, which is what instanceof checks in the worker see.
 // The cookies API only sees what `hosts`, the manifest's host permissions by default, allows.
 function loadBackground(fetchImpl, {
-    granted = true, createTab, cookies = [], getAllCookies, firefox = false, hosts = manifest.host_permissions,
+    granted = true, createTab, cookies = [], getAllCookies, firefox = false, hosts = manifest.host_permissions, online = true,
 } = {}) {
     const fetchCalls = [];
     const signals = [];
@@ -39,13 +42,15 @@ function loadBackground(fetchImpl, {
     const debug = [];
     const warnings = [];
     let keepAlives = 0;
-    let listener;
+    let onConnect;
 
     const context = vm.createContext({
         URL,
         atob,
         btoa,
         AbortController,
+        TextDecoder,
+        navigator: { onLine: online },
         // Recorded instead of scheduled, so a test fires the 90 s deadline when it wants to.
         setTimeout: (callback, ms) => deadlines.push({ callback, ms, cleared: false }),
         clearTimeout: (id) => id && (deadlines[id - 1].cleared = true),
@@ -61,9 +66,10 @@ function loadBackground(fetchImpl, {
         },
         chrome: {
             runtime: {
-                getManifest: () => ({ version: "9.8.7" }),
+                id: EXTENSION_ID,
+                getManifest: () => ({ version: "9.8.7", content_scripts: manifest.content_scripts }),
                 getPlatformInfo: async () => keepAlives++,
-                onMessage: { addListener: (callback) => (listener = callback) },
+                onConnect: { addListener: (callback) => (onConnect = callback) },
             },
             permissions: { contains: async () => granted },
             tabs: {
@@ -95,26 +101,52 @@ function loadBackground(fetchImpl, {
 
     vm.runInContext(source, context);
 
-    // Responses come from the vm realm; clone them so deepEqual compares plain objects.
-    const send = (message) =>
-        new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error("sendResponse was never called")), 1000).unref();
-            const respond = (response) => {
-                clearTimeout(timeout);
-                resolve(structuredClone(response));
+    // Plays the content script: opens a port as `sender`, posts `message` and resolves with the first reply, cloned
+    // out of the vm realm so deepEqual compares plain objects. `close()` disconnects the port the way a cancel does.
+    const connect = (message, sender = CONTAPP) => {
+        const listeners = { message: [], disconnect: [] };
+        let disconnected = false;
+        let close;
+        const reply = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("the worker never answered")), 1000).unref();
+            const port = {
+                name: "contapp-spv",
+                sender,
+                postMessage: (response) => {
+                    assert.equal(disconnected, false, "the worker must not post to a closed port");
+                    clearTimeout(timeout);
+                    resolve(structuredClone(response));
+                },
+                disconnect: () => (disconnected = true),
+                onMessage: { addListener: (callback) => listeners.message.push(callback) },
+                onDisconnect: { addListener: (callback) => listeners.disconnect.push(callback) },
             };
 
-            assert.equal(listener(message, {}, respond), true, "the listener must return true to keep the port open");
+            close = () => {
+                clearTimeout(timeout);
+                disconnected = true;
+                listeners.disconnect.forEach((callback) => callback(port));
+                resolve("closed");
+            };
+            onConnect(port);
+            if (!disconnected) {
+                listeners.message.forEach((callback) => callback(message, port));
+            }
         });
 
+        return { reply, close, disconnected: () => disconnected };
+    };
+    const send = (message, sender) => connect(message, sender).reply;
+
     return {
-        send, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        send, connect, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
         keepAlives: () => keepAlives, debug, warnings,
     };
 }
 
 const unreachable = () => assert.fail("fetch must not be called");
-const respond = (status, bytes, url = ANAF_URL) => async () => ({ status, url, arrayBuffer: async () => bytes.buffer });
+const respond = (status, bytes = JSON_BODY, url = ANAF_URL) => async () => ({ status, url, arrayBuffer: async () => bytes.slice().buffer });
+const answered = () => ({ status: 200, url: ANAF_URL, arrayBuffer: async () => JSON_BODY.slice().buffer });
 const throwing = (name, message) => (url, options, context) => {
     throw new (vm.runInContext(name, context))(message);
 };
@@ -126,7 +158,7 @@ test("ping answers the manifest version", async () => {
 });
 
 test("the host the worker fetches from is the one the manifest asks permission for", () => {
-    const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } }, URL });
+    const context = vm.createContext({ chrome: { runtime: { onConnect: { addListener() {} } } }, URL });
     vm.runInContext(source, context);
 
     const origin = `${new URL(vm.runInContext("ALLOWED_PREFIX", context)).origin}/*`;
@@ -171,7 +203,7 @@ test("fetch and login refuse anything that does not resolve under the SPV REST A
 });
 
 test("fetch and login use the normalised URL", async () => {
-    const { send, fetchCalls, createdTabs } = loadBackground(respond(200, new Uint8Array(0)));
+    const { send, fetchCalls, createdTabs } = loadBackground(respond(200));
     const normalised = [
         [ANAF_URL, ANAF_URL],
         ["https://webserviced.anaf.ro:443/SPVWS2/rest/x", "https://webserviced.anaf.ro/SPVWS2/rest/x"],
@@ -190,9 +222,9 @@ test("fetch and login use the normalised URL", async () => {
 });
 
 test("fetch returns status, final url and the body as base64, whatever the status or size", async () => {
-    // Every byte value, and lengths around the 0x8000 chunk toBase64 encodes at a time.
-    for (const length of [0, 1, 0x7fff, 0x8000, 0x8001, 0x8000 * 3 + 7]) {
-        const bytes = Uint8Array.from({ length }, (_, i) => (i * 7 + 13) & 0xff);
+    // A PDF header, then every byte value, in lengths around the 0x8000 chunk toBase64 encodes at a time.
+    for (const length of [4, 5, 0x7fff, 0x8000, 0x8001, 0x8000 * 3 + 7]) {
+        const bytes = Uint8Array.from({ length }, (_, i) => (i < 4 ? "%PDF".charCodeAt(i) : (i * 7 + 13) & 0xff));
         const { send, fetchCalls } = loadBackground(respond(200, bytes, `${ANAF_URL}&final`));
 
         assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), {
@@ -208,7 +240,7 @@ test("fetch returns status, final url and the body as base64, whatever the statu
     }
 
     // HTTP errors are the page's business: they still arrive as ok:true with the status.
-    for (const status of [204, 401, 500]) {
+    for (const status of [401, 404, 500]) {
         const { send } = loadBackground(respond(status, new TextEncoder().encode("denied")));
 
         assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: true, status, url: ANAF_URL, body: "ZGVuaWVk" });
@@ -261,20 +293,49 @@ test("a fetch cut off by the deadline answers timeout, not certificate_required"
     assert.deepEqual(await domTimeout.send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
 });
 
-test("the deadline stops once the headers arrive, so a slow body download is not cut off", async () => {
-    let clearedBeforeBody;
+test("once the headers arrive the body gets five minutes instead of 90 s, so a slow download is not cut off", async () => {
+    let whileReading;
     const { send, deadlines } = loadBackground(async () => ({
         status: 200,
         url: ANAF_URL,
         arrayBuffer: async () => {
-            clearedBeforeBody = deadlines[0].cleared;
+            whileReading = deadlines.map(({ ms, cleared }) => [ms, cleared]);
 
-            return new Uint8Array([1]).buffer;
+            return JSON_BODY.slice().buffer;
         },
     }));
 
     assert.equal((await send({ type: "fetch", url: ANAF_URL })).ok, true);
-    assert.equal(clearedBeforeBody, true);
+    assert.deepEqual(whileReading, [[90_000, true], [300_000, false]]);
+    assert.equal(deadlines[1].cleared, true, "and the body deadline is cleared once it is read");
+});
+
+test("a body that stalls after the headers times out and frees its slot", async () => {
+    const { send, deadlines, fetchCalls } = loadBackground((url, options) => {
+        if (fetchCalls.length > 4) {
+            return answered();
+        }
+
+        return {
+            status: 200,
+            url: ANAF_URL,
+            arrayBuffer: () => new Promise((resolve, reject) => {
+                options.signal.addEventListener("abort", () => reject(options.signal.reason));
+            }),
+        };
+    });
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    const stalled = Array.from({ length: 4 }, () => send({ type: "fetch", url: ANAF_URL }));
+    const queued = send({ type: "fetch", url: ANAF_URL });
+
+    await settle();
+    assert.equal(fetchCalls.length, 4);
+
+    deadlines.filter(({ ms, cleared }) => ms === 300_000 && !cleared).forEach(({ callback }) => callback());
+    for (const reply of await Promise.all(stalled)) {
+        assert.deepEqual(reply, { ok: false, error: "timeout" });
+    }
+    assert.equal((await queued).ok, true);
 });
 
 test("at most four fetches use the network at once, leaving connections for the login tab", async () => {
@@ -286,12 +347,12 @@ test("at most four fetches use the network at once, leaving connections for the 
     await settle();
     assert.equal(fetchCalls.length, 4);
 
-    pending.shift()({ status: 200, url: ANAF_URL, arrayBuffer: async () => new ArrayBuffer(0) });
+    pending.shift()(answered());
     await settle();
     assert.equal(fetchCalls.length, 5, "a finished fetch hands its slot to the next one");
 
     while (pending.length) {
-        pending.shift()({ status: 200, url: ANAF_URL, arrayBuffer: async () => new ArrayBuffer(0) });
+        pending.shift()(answered());
         await settle();
     }
 
@@ -391,6 +452,8 @@ test("login keeps a session the last fetch found alive, and clears one it found 
     const replies = [
         respond(200, text(' {"mesaje":[]}'))(),
         respond(200, text("%PDF-1.4"))(),
+        respond(200, text('\uFEFF{"mesaje":[]}'))(),
+        respond(200, text(`${"\r\n".repeat(20)}[]`))(),
         respond(200, text("<html></html>"), "https://webserviced.anaf.ro/my.policy")(),
         respond(200, text("<html>Access denied</html>"))(),
         respond(200, new Uint8Array(0))(),
@@ -398,7 +461,7 @@ test("login keeps a session the last fetch found alive, and clears one it found 
     ];
     const { send, removedCookies } = loadBackground(() => replies.shift(), { cookies });
 
-    for (const alive of ["JSON answer", "PDF download"]) {
+    for (const alive of ["JSON answer", "PDF download", "JSON after a byte order mark", "JSON after blank lines"]) {
         await send({ type: "fetch", url: ANAF_URL });
         assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, alive);
     }
@@ -485,4 +548,100 @@ test("unknown message types and malformed messages are rejected", async () => {
     for (const message of [{ type: "delete" }, {}, undefined, null, "fetch", 7, []]) {
         assert.deepEqual(await send(message), { ok: false, error: "unknown_type" });
     }
+});
+
+test("only the ContApp hosts the content script runs on may open a port", async () => {
+    const { send, fetchCalls } = loadBackground(respond(200));
+    const refused = [
+        null,
+        {},
+        { id: EXTENSION_ID },
+        { id: EXTENSION_ID, url: "not a url" },
+        { id: EXTENSION_ID, url: "https://contapp.ro/" },
+        { id: EXTENSION_ID, url: "https://blog.contapp.ro/" },
+        { id: EXTENSION_ID, url: "https://evil.contabilitate.contapp.ro/" },
+        { id: EXTENSION_ID, url: "https://contabilitate.contapp.ro.evil.example/" },
+        { id: EXTENSION_ID, url: "http://contabilitate.contapp.ro/" },
+        { id: "another-extension", url: CONTAPP.url },
+    ];
+
+    for (const sender of refused) {
+        assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }, sender), { ok: false, error: "forbidden_origin" }, String(JSON.stringify(sender)));
+    }
+    assert.equal(fetchCalls.length, 0);
+
+    const hosts = ["account", "api", "contabilitate", "crm", "declaratiaunica", "drive"];
+    for (const url of [...hosts.map((host) => `https://${host}.contapp.ro/x?y`), "https://app.contapp.test/", "https://contapp.test/"]) {
+        assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url }), { ok: true, version: "9.8.7" }, url);
+    }
+});
+
+test("a fetch that ends outside the SPV REST API is a lost session, and its body never reaches the page", async () => {
+    const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" }];
+
+    for (const url of [
+        "https://webserviced.anaf.ro/my.policy",
+        "http://webserviced.anaf.ro/SPVWS2/rest/listaMesaje",
+        "http://anaf.ro/",
+        "https://webserviced.anaf.ro/SPVWS2/other",
+    ]) {
+        let read = false;
+        let cancelled = false;
+        const { send } = loadBackground(async () => ({
+            status: 200,
+            url,
+            body: { cancel: async () => (cancelled = true) },
+            arrayBuffer: async () => {
+                read = true;
+
+                return JSON_BODY.slice().buffer;
+            },
+        }), { cookies });
+
+        await send({ type: "fetch", url: ANAF_URL });
+        assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "session_lost" }, url);
+        assert.deepEqual([read, cancelled], [false, true], url);
+        assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, url);
+    }
+});
+
+test("a gateway page under the prefix is a lost session, an HTTP error with any body is the page's business", async () => {
+    const text = (body) => new TextEncoder().encode(body);
+    const replies = [
+        [respond(200, text("<html>Access denied</html>")), { ok: false, error: "session_lost" }],
+        [respond(204, new Uint8Array(0)), { ok: false, error: "session_lost" }],
+        [respond(503, text("<html>busy</html>")), { ok: true, status: 503, url: ANAF_URL, body: Buffer.from("<html>busy</html>").toString("base64") }],
+    ];
+
+    for (const [fetchImpl, expected] of replies) {
+        assert.deepEqual(await loadBackground(fetchImpl).send({ type: "fetch", url: ANAF_URL }), expected);
+    }
+});
+
+test("offline, a failed fetch is a network error rather than a missing certificate", async () => {
+    const { send } = loadBackground(throwing("TypeError", "Failed to fetch"), { online: false });
+
+    assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "network", message: "offline" });
+});
+
+test("closing the port aborts the fetch, frees its slot and posts nothing", async () => {
+    const { connect, send, signals, fetchCalls } = loadBackground((url, options) => {
+        if (fetchCalls.length > 4) {
+            return answered();
+        }
+
+        return new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason)));
+    });
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    const stuck = Array.from({ length: 4 }, () => connect({ type: "fetch", url: ANAF_URL }));
+    const queued = send({ type: "fetch", url: ANAF_URL });
+
+    await settle();
+    assert.equal(fetchCalls.length, 4);
+
+    stuck[0].close();
+    await settle();
+    assert.equal(signals[0].aborted, true);
+    assert.equal((await queued).ok, true, "the queued fetch got the freed slot");
+    assert.equal(await stuck[0].reply, "closed");
 });

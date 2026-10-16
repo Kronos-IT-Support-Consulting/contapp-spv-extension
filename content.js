@@ -1,10 +1,29 @@
 const CHANNEL = "contapp-spv";
+// Cancels for the requests still waiting on the worker, by the page's id.
+const pending = new Map();
 
 // A sandboxed document has the opaque origin "null": the origin check below would pass for anyone and
 // postMessage would refuse "null" as a target. Such a page gets no bridge.
 if (location.origin !== "null") {
-    document.documentElement.dataset.spvExtension = chrome.runtime.getManifest().version;
     window.addEventListener("message", onMessage);
+    document.documentElement.dataset.spvExtension = chrome.runtime.getManifest().version;
+}
+
+// Chrome does not inject the new content script into open tabs after the extension is updated or reloaded; this
+// one stays behind with every extension API gone. Only a page reload brings the bridge back.
+function orphaned() {
+    try {
+        return !chrome.runtime?.id;
+    } catch {
+        return true;
+    }
+}
+
+function detach() {
+    window.removeEventListener("message", onMessage);
+    delete document.documentElement.dataset.spvExtension;
+
+    return { ok: false, error: "extension_reloaded" };
 }
 
 function fromBase64(base64) {
@@ -18,26 +37,57 @@ function fromBase64(base64) {
     return bytes.buffer;
 }
 
-// Whatever goes wrong between here and the service worker (extension reloaded, no answer, an answer
-// that cannot be decoded) looks the same to the page: "extension".
-async function relay(type, url) {
-    try {
-        const response = await chrome.runtime.sendMessage({ type, url });
-
-        if (typeof response !== "object" || response === null) {
-            return { ok: false, error: "extension" };
-        }
-
-        if (response.ok && typeof response.body === "string") {
-            return { ...response, body: fromBase64(response.body) };
-        }
-
-        return response;
-    } catch (error) {
-        console.debug("ContApp SPV extension unreachable", error);
-
+// Whatever else goes wrong between here and the service worker (no answer, an answer that cannot be decoded, a
+// worker that died mid-request) looks the same to the page: "extension".
+function decode(response) {
+    if (typeof response !== "object" || response === null) {
         return { ok: false, error: "extension" };
     }
+
+    try {
+        return response.ok && typeof response.body === "string" ? { ...response, body: fromBase64(response.body) } : response;
+    } catch {
+        return { ok: false, error: "extension" };
+    }
+}
+
+// One port per request, so closing it (the page cancels, or navigates away and takes this script with it) tells
+// the worker to abort the fetch.
+function relay(id, type, url) {
+    if (orphaned()) {
+        return Promise.resolve(detach());
+    }
+
+    return new Promise((resolve) => {
+        let port;
+        let settled = false;
+        const settle = (payload) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (pending.get(id) === cancel) {
+                pending.delete(id);
+            }
+            port.disconnect();
+            resolve(payload);
+        };
+        const cancel = () => settle({ ok: false, error: "cancelled" });
+
+        try {
+            port = chrome.runtime.connect({ name: CHANNEL });
+        } catch (error) {
+            console.debug("ContApp SPV extension unreachable", error);
+            resolve(orphaned() ? detach() : { ok: false, error: "extension" });
+
+            return;
+        }
+
+        pending.set(id, cancel);
+        port.onMessage.addListener((response) => settle(decode(response)));
+        port.onDisconnect.addListener(() => settle(orphaned() ? detach() : { ok: false, error: "extension" }));
+        port.postMessage({ type, url });
+    });
 }
 
 function reply(id, payload) {
@@ -57,5 +107,12 @@ async function onMessage(event) {
         return;
     }
 
-    reply(data.id, await relay(data.type, data.url));
+    // A cancel gets no reply of its own: the request it names answers "cancelled".
+    if (data.type === "cancel") {
+        pending.get(data.id)?.();
+
+        return;
+    }
+
+    reply(data.id, await relay(data.id, data.type, data.url));
 }

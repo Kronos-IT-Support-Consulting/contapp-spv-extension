@@ -84,6 +84,10 @@ Page ↔ content script, via `window.postMessage`. Both sides check `event.origi
 `direction: "reply"` so the page can tell its own requests from answers (the content script ignores
 anything marked as a reply).
 
+Content script ↔ service worker: one `chrome.runtime.connect` port per request. The worker answers only ports
+opened by this extension's content script from a page on one of the hosts the manifest injects it into; closing
+the port (a `cancel`, or the tab navigating away or closing) aborts the request.
+
 Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fetch` and `login`.
 
 | page sends | extension answers |
@@ -91,25 +95,35 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 | `{type:"ping"}` | `{ok:true, version}` |
 | `{type:"fetch", url}` | `{ok:true, status, url, body}` with `body` an ArrayBuffer (structured clone) |
 | `{type:"login", url}` | `{ok:true, reset, message?}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
-| any | `{ok:false, error:"certificate_required"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
+| `{type:"cancel", id}` | nothing; the pending request with that `id` answers `{ok:false, error:"cancelled"}` |
+| any | `{ok:false, error:"certificate_required"\|"session_lost"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"forbidden_origin"\|"network"\|"extension"\|"extension_reloaded"\|"unknown_type", message?}` |
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
-  network-level failure. The page should offer the `login` action.
-- `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
-  prompt that never showed. The request is aborted so it stops holding one of Chrome's six connections to the host.
-  Once the headers arrive the deadline stops, so a slow download of a large response is not cut off. The page
+  network-level failure while the browser is online (offline it is `network` with the message `offline`). The page
   should offer the `login` action.
-- `cancelled`: a `login` reset the lost session while this fetch was in flight or queued. Not a failure to show:
-  run the request again once the user is back from the login tab.
+- `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
+  `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
+  answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). No body is handed over. The page
+  should offer the `login` action.
+- `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
+  prompt that never showed, or the body did not finish within 5 minutes of the headers. The request is aborted so it
+  stops holding one of Chrome's six connections to the host. The page should offer the `login` action.
+- `cancelled`: a `login` reset the lost session while this fetch was in flight or queued, or the page sent `cancel`
+  for it. After a login it is not a failure to show: run the request again once the user is back from the login tab.
 - `permission`: the extension has no access to `webserviced.anaf.ro` (revoked in Firefox, or Chrome's site access
   set to "on click"); `message` names the missing grant. The page should ask the user to grant site access.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the SPV REST prefix
   (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
   response too large to hand over (above 47 MiB) and a login tab that could not be opened.
-- `extension`: the content script got no usable answer from the service worker (extension reloaded or updated,
-  or a service worker that died mid-request). Retry once; if it persists, reload the ContApp page.
+- `forbidden_origin`: the request came from a page the extension does not serve. ContApp never sees it in
+  practice, since the content script only runs on those hosts.
+- `extension`: the content script got no usable answer from the service worker (a worker that died mid-request).
+  Retry once; if it persists, reload the ContApp page.
+- `extension_reloaded`: the extension was updated or reloaded since this page loaded. Chrome does not bring the
+  bridge back into open tabs, so the content script detaches (and removes `data-spv-extension`); only reloading the
+  ContApp page helps, so say so instead of retrying.
 - `unknown_type`: the `type` is none of the above.
 
 At most four fetches use the network at once; the rest wait their turn. Chrome opens six connections per host,
@@ -126,10 +140,8 @@ so two stay free for the login tab even when every fetch is stuck on a handshake
 - `failed`: the cookies could not be cleared, with `message` saying why (most often a revoked host permission).
   The tab still opens; if it lands on the gateway's error page, the user has to clear the ANAF cookies by hand.
 
-The request follows redirects, and the reply's `url` is the final one. When ANAF's session is gone, the SPV
-service redirects to its F5 login pages and answers `200` with HTML: the reply is still `ok:true`, so the page
-should check that `url` still starts with the SPV REST prefix and otherwise treat the session as lost and offer
-`login`.
+The request follows redirects within the SPV REST API, and the reply's `url` is the final one; when ANAF's session
+is gone it redirects to its F5 login pages, which answers `session_lost` (see above).
 
 Presence check without a round trip: the content script sets
 `document.documentElement.dataset.spvExtension` (i.e. `<html data-spv-extension="<version>">`) at
@@ -253,7 +265,11 @@ fails on the missing `background.scripts` fallback and gecko id, which Chrome ne
 
 To try changes, load the repository folder unpacked in Chrome (it is Chrome-shaped as is and still matches the
 local `contapp.test` hosts), or `dist/firefox` in Firefox after `./build.sh`. Reload the extension and the
-ContApp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on `*.contapp.ro`.
+ContApp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on
+`https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*`.
+
+`npm test` runs the unit tests. `npm run test:e2e` loads `dist/chrome` (build first) into Playwright's Chromium,
+with every request answered by test routes; `npx playwright install chromium` fetches the browser once. CI runs both.
 
 Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md); security reports: [SECURITY.md](SECURITY.md). MIT licensed.
 
@@ -355,7 +371,6 @@ from other stores), so the Edge listing below is optional.
 
 ## Known limitations
 
-- The content script matches `https://*.contapp.ro/*`, which includes the apex `contapp.ro` (the marketing site)
-  and every other subdomain. Any script injection on one of those hosts can drive the proxy. Narrow `matches` to the
-  exact application host(s) once they are fixed; this needs the same change in the store justifications and in
-  `PRIVACY.md`.
+- The content script runs on `https://{account,api,contabilitate,crm,declaratiaunica,drive}.contapp.ro/*`, and replies go to the whole page through `window.postMessage`: any
+  script those pages load, third-party ones included, can drive the proxy and read the SPV answers. Keep those
+  pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.
