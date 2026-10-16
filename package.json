@@ -13,7 +13,7 @@
         "node": ">=22"
     },
     "devDependencies": {
-        "chrome-webstore-upload-cli": "3.5.0",
+        "chrome-webstore-upload-cli": "4.0.2",
         "web-ext": "^10.7.0"
     },
     "overrides": {
