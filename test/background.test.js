@@ -11,26 +11,34 @@ const ANAF_URL = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
 
 // Runs background.js in its own realm with chrome.* stubbed. `fetchImpl(url, options, context)` plays fetch;
 // `context` lets a test throw the realm's own error classes, which is what instanceof checks in the worker see.
-function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], getAllCookies } = {}) {
+function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], getAllCookies, firefox = false } = {}) {
     const fetchCalls = [];
+    const signals = [];
+    const deadlines = [];
+    const cookieQueries = [];
     const createdTabs = [];
     const removedCookies = [];
     const events = [];
     const timers = [];
     const debug = [];
+    const warnings = [];
     let keepAlives = 0;
     let listener;
 
     const context = vm.createContext({
         URL,
         btoa,
-        // A plain object, so fetchCalls can clone it and a test can flip `aborted` the way the timeout would.
-        AbortSignal: { timeout: (ms) => ({ ms, aborted: false }) },
+        AbortController,
+        // Recorded instead of scheduled, so a test fires the 90 s deadline when it wants to.
+        setTimeout: (callback, ms) => deadlines.push({ callback, ms, cleared: false }),
+        clearTimeout: (id) => id && (deadlines[id - 1].cleared = true),
         setInterval: (callback, ms) => timers.push({ callback, ms, cleared: false }),
         clearInterval: (id) => (timers[id - 1].cleared = true),
-        console: { debug: (...args) => debug.push(args) },
+        console: { debug: (...args) => debug.push(args), warn: (...args) => warnings.push(args) },
         fetch: async (url, options) => {
-            fetchCalls.push(structuredClone({ url, options }));
+            const { signal, ...rest } = options;
+            fetchCalls.push(structuredClone({ url, options: rest }));
+            signals.push(signal);
 
             return fetchImpl(url, options, context);
         },
@@ -48,13 +56,18 @@ function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], ge
                 }),
             },
             cookies: {
-                getAll: getAllCookies ?? (async () => structuredClone(cookies)),
+                getAll: async (query) => {
+                    cookieQueries.push(structuredClone(query));
+
+                    return getAllCookies ? getAllCookies(query) : structuredClone(cookies);
+                },
                 remove: async (details) => {
                     events.push("cookie");
                     removedCookies.push(structuredClone(details));
                 },
             },
         },
+        ...(firefox && { browser: {} }),
     });
 
     vm.runInContext(source, context);
@@ -71,7 +84,10 @@ function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], ge
             assert.equal(listener(message, {}, respond), true, "the listener must return true to keep the port open");
         });
 
-    return { send, fetchCalls, createdTabs, removedCookies, events, timers, keepAlives: () => keepAlives, debug };
+    return {
+        send, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        keepAlives: () => keepAlives, debug, warnings,
+    };
 }
 
 const unreachable = () => assert.fail("fetch must not be called");
@@ -139,7 +155,7 @@ test("fetch and login use the normalised URL", async () => {
 
     for (const [url, href] of normalised) {
         assert.equal((await send({ type: "fetch", url })).ok, true, url);
-        assert.deepEqual(await send({ type: "login", url }), { ok: true }, url);
+        assert.equal((await send({ type: "login", url })).ok, true, url);
         assert.equal(fetchCalls.at(-1).url, href);
         assert.deepEqual(createdTabs.at(-1), { url: href });
     }
@@ -159,7 +175,7 @@ test("fetch returns status, final url and the body as base64, whatever the statu
         });
         assert.deepEqual(fetchCalls, [{
             url: ANAF_URL,
-            options: { credentials: "include", redirect: "follow", cache: "no-store", signal: { ms: 90_000, aborted: false } },
+            options: { credentials: "include", redirect: "follow", cache: "no-store" },
         }]);
     }
 
@@ -198,21 +214,62 @@ test("a body that cannot be read is a network error, even when the stream throws
     assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "network", message: "body stream already read" });
 });
 
-test("a fetch or a body read cut off by the timeout answers timeout, not certificate_required", async () => {
-    const timingOut = (url, options, context) => {
-        options.signal.aborted = true;
-        throw new (vm.runInContext("TypeError", context))("The operation was aborted due to timeout");
-    };
+test("a fetch cut off by the deadline answers timeout, not certificate_required", async () => {
+    // A real fetch rejects with the signal's reason once the deadline aborts it.
+    const { send, deadlines } = loadBackground((url, options) => {
+        deadlines.at(-1).callback();
+        throw options.signal.reason;
+    });
 
-    assert.deepEqual(await loadBackground(timingOut).send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
+    assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
+    assert.deepEqual(deadlines.map(({ ms }) => ms), [90_000]);
 
-    const slowBody = loadBackground(async (url, options, context) => ({
+    // AbortSignal.timeout's own rejection, in case the deadline is ever built that way.
+    const domTimeout = loadBackground(() => {
+        domTimeout.deadlines.at(-1).callback();
+        throw new DOMException("signal timed out", "TimeoutError");
+    });
+
+    assert.deepEqual(await domTimeout.send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
+});
+
+test("the deadline stops once the headers arrive, so a slow body download is not cut off", async () => {
+    let clearedBeforeBody;
+    const { send, deadlines } = loadBackground(async () => ({
         status: 200,
         url: ANAF_URL,
-        arrayBuffer: async () => timingOut(url, options, context),
+        arrayBuffer: async () => {
+            clearedBeforeBody = deadlines[0].cleared;
+
+            return new Uint8Array([1]).buffer;
+        },
     }));
 
-    assert.deepEqual(await slowBody.send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
+    assert.equal((await send({ type: "fetch", url: ANAF_URL })).ok, true);
+    assert.equal(clearedBeforeBody, true);
+});
+
+test("at most four fetches use the network at once, leaving connections for the login tab", async () => {
+    const pending = [];
+    const { send, fetchCalls } = loadBackground(() => new Promise((resolve) => pending.push(resolve)));
+    const replies = Array.from({ length: 6 }, () => send({ type: "fetch", url: ANAF_URL }));
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    await settle();
+    assert.equal(fetchCalls.length, 4);
+
+    pending.shift()({ status: 200, url: ANAF_URL, arrayBuffer: async () => new ArrayBuffer(0) });
+    await settle();
+    assert.equal(fetchCalls.length, 5, "a finished fetch hands its slot to the next one");
+
+    while (pending.length) {
+        pending.shift()({ status: 200, url: ANAF_URL, arrayBuffer: async () => new ArrayBuffer(0) });
+        await settle();
+    }
+
+    assert.equal(fetchCalls.length, 6);
+
+    assert.deepEqual((await Promise.all(replies)).map(({ ok }) => ok), [true, true, true, true, true, true]);
 });
 
 test("a body too large for a runtime message is a network error instead of a reply that never arrives", async () => {
@@ -248,30 +305,96 @@ test("the service worker is kept alive while a fetch is pending and left alone a
     assert.deepEqual(timers.map((timer) => [timer.ms, timer.cleared]), [[25_000, true]]);
 });
 
-test("login clears the ANAF cookies before it opens the tab, and opens it even when clearing fails", async () => {
+test("login clears every cookie the ANAF host receives, partitioned or on .anaf.ro, before it opens the tab", async () => {
     const cookies = [
-        { name: "MRHSession", domain: "webserviced.anaf.ro", path: "/", storeId: "0" },
-        { name: "F5_ST", domain: ".webserviced.anaf.ro", path: "/SPVWS2", storeId: "0" },
+        { name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" },
+        { name: "F5_ST", domain: ".webserviced.anaf.ro", hostOnly: false, path: "/SPVWS2", storeId: "0" },
+        { name: "TS01", domain: ".anaf.ro", hostOnly: false, path: "/", storeId: "0" },
+        { name: "CHIPS", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0", partitionKey: { topLevelSite: "https://contapp.ro" } },
+        // Neither reaches webserviced.anaf.ro, so neither is the gateway's.
+        { name: "www", domain: "www.anaf.ro", hostOnly: true, path: "/", storeId: "0" },
+        { name: "host", domain: "anaf.ro", hostOnly: true, path: "/", storeId: "0" },
     ];
-    const { send, removedCookies, events } = loadBackground(unreachable, { cookies });
+    const { send, removedCookies, cookieQueries, events } = loadBackground(unreachable, { cookies });
 
-    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true });
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
+    assert.deepEqual(cookieQueries, [{ domain: "anaf.ro", partitionKey: {} }]);
     assert.deepEqual(removedCookies, [
         { url: "https://webserviced.anaf.ro/", name: "MRHSession", storeId: "0" },
         { url: "https://webserviced.anaf.ro/SPVWS2", name: "F5_ST", storeId: "0" },
+        { url: "https://anaf.ro/", name: "TS01", storeId: "0" },
+        { url: "https://webserviced.anaf.ro/", name: "CHIPS", storeId: "0", partitionKey: { topLevelSite: "https://contapp.ro" } },
     ]);
-    assert.deepEqual(events, ["cookie", "cookie", "tab"]);
+    assert.deepEqual(events, ["cookie", "cookie", "cookie", "cookie", "tab"]);
+});
 
+test("in Firefox the cookie query covers first-party isolation and removal passes the cookie's first-party domain", async () => {
+    const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "firefox-default", firstPartyDomain: "" }];
+    const { send, removedCookies, cookieQueries } = loadBackground(unreachable, { cookies, firefox: true });
+
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
+    assert.deepEqual(cookieQueries, [{ domain: "anaf.ro", partitionKey: {}, firstPartyDomain: null }]);
+    assert.deepEqual(removedCookies, [{ url: "https://webserviced.anaf.ro/", name: "MRHSession", storeId: "firefox-default", firstPartyDomain: "" }]);
+});
+
+test("a session reset that cannot run is reported and logged, and the tab still opens", async () => {
     const getAllCookies = async () => { throw new Error("cookies API unavailable"); };
     const failing = loadBackground(unreachable, { getAllCookies });
 
-    assert.deepEqual(await failing.send({ type: "login", url: ANAF_URL }), { ok: true });
+    assert.deepEqual(await failing.send({ type: "login", url: ANAF_URL }), { ok: true, reset: "failed", message: "cookies API unavailable" });
     assert.deepEqual(failing.createdTabs, [{ url: ANAF_URL }]);
+    assert.equal(failing.warnings.length, 1);
+
+    // Without the host permission getAll returns nothing instead of failing, so it is checked up front.
+    const revoked = loadBackground(unreachable, { granted: false });
+
+    assert.deepEqual(await revoked.send({ type: "login", url: ANAF_URL }), {
+        ok: true,
+        reset: "failed",
+        message: "permission for https://webserviced.anaf.ro/* is not granted",
+    });
+    assert.deepEqual(revoked.cookieQueries, []);
+    assert.deepEqual(revoked.createdTabs, [{ url: ANAF_URL }]);
+});
+
+test("login keeps a session the last fetch found alive, and clears one it found lost", async () => {
+    const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" }];
+    const replies = [
+        respond(200, new Uint8Array(0))(),
+        respond(200, new Uint8Array(0), "https://webserviced.anaf.ro/my.policy")(),
+        respond(500, new Uint8Array(0))(),
+    ];
+    const { send, removedCookies } = loadBackground(() => replies.shift(), { cookies });
+
+    await send({ type: "fetch", url: ANAF_URL });
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" });
+    assert.equal(removedCookies.length, 0, "another ContApp tab may be syncing with it");
+
+    for (const lost of ["redirected to F5", "HTTP 500"]) {
+        await send({ type: "fetch", url: ANAF_URL });
+        assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, lost);
+    }
+});
+
+test("login on a lost session cancels the fetches stuck on it", async () => {
+    let started;
+    const stuck = new Promise((resolve) => (started = resolve));
+    const { send, signals } = loadBackground((url, options) => {
+        started();
+
+        return new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason)));
+    });
+    const reply = send({ type: "fetch", url: ANAF_URL });
+
+    await stuck;
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
+    assert.equal(signals[0].aborted, true);
+    assert.deepEqual(await reply, { ok: false, error: "network", message: "cancelled by the ANAF login" });
 });
 
 test("login opens a tab, and a tab that cannot be opened is a network error", async () => {
     const { send, createdTabs } = loadBackground(unreachable);
-    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true });
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
     assert.deepEqual(createdTabs, [{ url: ANAF_URL }]);
 
     const createTab = async () => { throw new Error("Tabs cannot be edited right now"); };

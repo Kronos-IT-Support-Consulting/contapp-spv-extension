@@ -73,8 +73,9 @@ host permission at any time (*about:addons* → ContApp SPV → the permissions 
 `gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
 advisory warning about the Android minimum version, which is expected.
 
-Chrome and Edge need version 110 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
-service worker's idle timer, which is how the worker stays alive while an SPV response is pending.
+Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
+service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
+`chrome.cookies` takes a `partitionKey`, which the login needs to clear partitioned ANAF cookies too.
 
 ## Protocol
 
@@ -89,23 +90,38 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 |---|---|
 | `{type:"ping"}` | `{ok:true, version}` |
 | `{type:"fetch", url}` | `{ok:true, status, url, body}` with `body` an ArrayBuffer (structured clone) |
-| `{type:"login", url}` | `{ok:true}` after clearing the `webserviced.anaf.ro` cookies and `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
+| `{type:"login", url}` | `{ok:true, reset, message?}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
 | any | `{ok:false, error:"certificate_required"\|"timeout"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure. The page should offer the `login` action.
-- `timeout`: ANAF did not answer within 90 s, usually a handshake stuck on a certificate picker or PIN prompt that
-  never showed. The request is aborted so it stops holding one of Chrome's six connections to the host. The page
+- `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
+  prompt that never showed. The request is aborted so it stops holding one of Chrome's six connections to the host.
+  Once the headers arrive the deadline stops, so a slow download of a large response is not cut off. The page
   should offer the `login` action.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the SPV REST prefix
   (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
-  response too large to hand over (above 47 MiB), a host permission the user revoked, and a login tab that could
-  not be opened.
+  response too large to hand over (above 47 MiB), a host permission the user revoked, a login tab that could
+  not be opened, and a fetch cancelled by a login (`cancelled by the ANAF login`).
 - `extension`: the content script got no usable answer from the service worker (extension reloaded or updated,
   or a service worker that died mid-request). Retry once; if it persists, reload the ContApp page.
 - `unknown_type`: the `type` is none of the above.
+
+At most four fetches use the network at once; the rest wait their turn. Chrome opens six connections per host,
+so two stay free for the login tab even when every fetch is stuck on a handshake.
+
+`reset` in the login reply says what happened to the ANAF session before the tab opened:
+
+- `kept`: the last fetch got an answer from the SPV REST API, so the session is alive and is left alone (another
+  ContApp tab may be syncing with it).
+- `cleared`: the session was lost, or unknown after the service worker restarted. Every cookie the browser sends to
+  `webserviced.anaf.ro` was deleted, including those set on `.anaf.ro` and partitioned ones, and fetches still in
+  flight were cancelled so they stop holding connections. After a failed certificate or PIN check, ANAF's F5
+  gateway keeps answering the stale cookie with its error page; this lets the login start over.
+- `failed`: the cookies could not be cleared, with `message` saying why (most often a revoked host permission).
+  The tab still opens; if it lands on the gateway's error page, the user has to clear the ANAF cookies by hand.
 
 The request follows redirects, and the reply's `url` is the final one. When ANAF's session is gone, the SPV
 service redirects to its F5 login pages and answers `200` with HTML: the reply is still `ok:true`, so the page
@@ -173,7 +189,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
 ### Manual spike test (Chrome, USB token)
 
 1. Make sure the token middleware is installed and Chrome can see the certificate: opening
-   `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=1` directly in a tab should show the
+   `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60` directly in a tab should show the
    certificate picker and a PIN prompt.
 2. Quit and restart Chrome so no certificate choice is cached.
 3. Load the extension unpacked (above). Open any ContApp page and the DevTools console.
@@ -192,7 +208,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    const url = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
    await ask({ type: "fetch", url });
    ```
-6. Login: `await ask({ type: "login", url: "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=1" })`.
+6. Login: `await ask({ type: "login", url })`. Expect `reset: "cleared"`: the fetch in step 5 found no session.
    A tab opens; pick the certificate, enter the PIN, confirm JSON shows, then close the tab.
 7. Fetch again: `const r = await ask({ type: "fetch", url }); r.status; new TextDecoder().decode(r.body)`.
    Expect status 200 and the messages JSON.

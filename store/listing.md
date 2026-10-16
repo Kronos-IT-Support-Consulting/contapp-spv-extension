@@ -114,7 +114,7 @@ The extension has a single purpose: it lets the ContApp application read ANAF's 
 The only API permission is `cookies`:
 
 ```
-When the user clicks "Autentificare ANAF" in ContApp, the extension deletes the browser's cookies for webserviced.anaf.ro (chrome.cookies.getAll with domain webserviced.anaf.ro, then chrome.cookies.remove) before opening the login tab. After a failed certificate or PIN check, ANAF's gateway keeps answering the stale session cookie with an error page, so without this the user cannot log in again until the session expires. The extension never reads cookie values, never sets cookies and never touches cookies of any other site.
+When the user clicks "Autentificare ANAF" in ContApp and the ANAF session no longer works, the extension deletes the cookies the browser sends to webserviced.anaf.ro (chrome.cookies.getAll for anaf.ro, keeping only the cookies that reach webserviced.anaf.ro, then chrome.cookies.remove) before opening the login tab. After a failed certificate or PIN check, ANAF's gateway keeps answering the stale session cookie with an error page, so without this the user cannot log in again until the session expires. The extension uses the cookies it lists only to delete them: it never uses, stores or transmits cookie values, never sets cookies and never touches cookies of any other site.
 ```
 
 Opening the ANAF login tab (`chrome.tabs.create`) needs no permission; if a form asks why the extension opens tabs:
@@ -150,8 +150,8 @@ Website content unticked.
 Reasoning: Chrome counts transmitting and sharing as handling user data and requires the disclosure to match the
 privacy policy, which lists the certificate holder's CNP, CUIs and tax documents. The extension stores nothing and
 sends nothing to its publisher directly, but it relays ANAF's response to the ContApp page the user opened, and that
-page sends it to ContApp's server under the user's own account. The certificate, PIN and ANAF cookies are never read,
-so *Authentication information* stays unticked. The Firefox build declares the same two categories in
+page sends it to ContApp's server under the user's own account. The certificate and PIN are never read, and the ANAF
+cookies are only listed to be deleted, never used, stored or sent, so *Authentication information* stays unticked. The Firefox build declares the same two categories in
 `data_collection_permissions` (see `build.sh`).
 
 Certifications, all three ticked:
