@@ -9,9 +9,25 @@ const source = fs.readFileSync(path.join(root, "background.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const ANAF_URL = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
 
+// Whether a host permission pattern such as "*://anaf.ro/*" covers the origin of `url`.
+const permits = (pattern, url) => {
+    const [, scheme, host] = pattern.match(/^(\*|https?):\/\/([^/]+)\/\*$/);
+    const { protocol, hostname } = new URL(url);
+
+    return (scheme === "*" || `${scheme}:` === protocol) && host === hostname;
+};
+const permitted = (hosts, url) => hosts.some((pattern) => permits(pattern, url));
+
+// Chrome checks a cookie against the host permissions as http(s)://<domain without the dot>/, https only when the
+// cookie is Secure: getAll leaves out the cookies that fail, and remove rejects a URL that fails.
+const cookieUrl = ({ domain, secure }) => `${secure ? "https" : "http"}://${domain.replace(/^\./, "")}/`;
+
 // Runs background.js in its own realm with chrome.* stubbed. `fetchImpl(url, options, context)` plays fetch;
 // `context` lets a test throw the realm's own error classes, which is what instanceof checks in the worker see.
-function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], getAllCookies, firefox = false } = {}) {
+// The cookies API only sees what `hosts`, the manifest's host permissions by default, allows.
+function loadBackground(fetchImpl, {
+    granted = true, createTab, cookies = [], getAllCookies, firefox = false, hosts = manifest.host_permissions,
+} = {}) {
     const fetchCalls = [];
     const signals = [];
     const deadlines = [];
@@ -59,9 +75,15 @@ function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], ge
                 getAll: async (query) => {
                     cookieQueries.push(structuredClone(query));
 
-                    return getAllCookies ? getAllCookies(query) : structuredClone(cookies);
+                    const all = getAllCookies ? await getAllCookies(query) : structuredClone(cookies);
+
+                    return all.filter((cookie) => permitted(hosts, cookieUrl(cookie)));
                 },
                 remove: async (details) => {
+                    if (!permitted(hosts, details.url)) {
+                        throw new Error(`No host permissions for cookies at url: "${details.url}".`);
+                    }
+
                     events.push("cookie");
                     removedCookies.push(structuredClone(details));
                 },
@@ -107,8 +129,13 @@ test("the host the worker fetches from is the one the manifest asks permission f
     vm.runInContext(source, context);
 
     const origin = `${new URL(vm.runInContext("ALLOWED_PREFIX", context)).origin}/*`;
-    assert.deepEqual(manifest.host_permissions, [origin]);
     assert.deepEqual(structuredClone(vm.runInContext("HOST_PERMISSION", context)), { origins: [origin] });
+    assert.ok(permitted(manifest.host_permissions, vm.runInContext("ALLOWED_PREFIX", context)));
+    assert.deepEqual(
+        manifest.host_permissions,
+        structuredClone(vm.runInContext("COOKIE_PERMISSION", context)).origins,
+        "the manifest asks for exactly what the session reset checks for",
+    );
     assert.deepEqual(manifest.permissions, ["cookies"], "only cookies, to reset ANAF's session before the login tab");
 });
 
@@ -307,7 +334,7 @@ test("the service worker is kept alive while a fetch is pending and left alone a
 
 test("login clears every cookie the ANAF host receives, partitioned or on .anaf.ro, before it opens the tab", async () => {
     const cookies = [
-        { name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" },
+        { name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0", secure: true },
         { name: "F5_ST", domain: ".webserviced.anaf.ro", hostOnly: false, path: "/SPVWS2", storeId: "0" },
         { name: "TS01", domain: ".anaf.ro", hostOnly: false, path: "/", storeId: "0" },
         { name: "CHIPS", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0", partitionKey: { topLevelSite: "https://contapp.ro" } },
@@ -351,7 +378,7 @@ test("a session reset that cannot run is reported and logged, and the tab still 
     assert.deepEqual(await revoked.send({ type: "login", url: ANAF_URL }), {
         ok: true,
         reset: "failed",
-        message: "permission for https://webserviced.anaf.ro/* is not granted",
+        message: "permission for *://webserviced.anaf.ro/* and *://anaf.ro/* is not granted",
     });
     assert.deepEqual(revoked.cookieQueries, []);
     assert.deepEqual(revoked.createdTabs, [{ url: ANAF_URL }]);
@@ -390,6 +417,48 @@ test("login on a lost session cancels the fetches stuck on it", async () => {
     assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
     assert.equal(signals[0].aborted, true);
     assert.deepEqual(await reply, { ok: false, error: "network", message: "cancelled by the ANAF login" });
+});
+
+test("login also cancels the fetches queued for a slot, and fetches sent during the reset wait for it", async () => {
+    let finishReset;
+    const resetRunning = new Promise((resolve) => (finishReset = resolve));
+    const getAllCookies = async () => {
+        await resetRunning;
+
+        return [];
+    };
+    const { send, fetchCalls } = loadBackground((url, options) =>
+        new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason))),
+    { getAllCookies });
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    const stuck = Array.from({ length: 6 }, () => send({ type: "fetch", url: ANAF_URL }));
+
+    await settle();
+    assert.equal(fetchCalls.length, 4);
+
+    const login = send({ type: "login", url: ANAF_URL });
+    await settle();
+
+    // The freed slots must not go to the queued fetches while the dead session's cookies are still there.
+    assert.equal(fetchCalls.length, 4);
+    for (const reply of await Promise.all(stuck)) {
+        assert.deepEqual(reply, { ok: false, error: "network", message: "cancelled by the ANAF login" });
+    }
+
+    const late = send({ type: "fetch", url: ANAF_URL });
+    await settle();
+    assert.equal(fetchCalls.length, 4, "a fetch sent during the reset waits for it");
+
+    finishReset();
+    assert.deepEqual(await login, { ok: true, reset: "cleared" });
+    await settle();
+    assert.equal(fetchCalls.length, 5, "and starts once the cookies are gone, with every slot free again");
+
+    // A second login cancels it in turn, which shows it held a slot normally.
+    const again = send({ type: "login", url: ANAF_URL });
+    finishReset();
+    await again;
+    assert.deepEqual(await late, { ok: false, error: "network", message: "cancelled by the ANAF login" });
 });
 
 test("login opens a tab, and a tab that cannot be opened is a network error", async () => {

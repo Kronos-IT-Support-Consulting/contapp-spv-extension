@@ -123,10 +123,12 @@ Opening the ANAF login tab (`chrome.tabs.create`) needs no permission; if a form
 When the user clicks "Autentificare ANAF" in ContApp, the extension opens the ANAF SPV address in a new tab (chrome.tabs.create, which needs no permission). A request made by the service worker cannot show the browser's client-certificate picker or the token's PIN prompt; a visible tab can. After the user picks the certificate in that tab, the browser can reuse it for the extension's requests. The extension does not query or read any tab.
 ```
 
-Host permission `https://webserviced.anaf.ro/*`:
+Host permissions `*://webserviced.anaf.ro/*` and `*://anaf.ro/*`:
 
 ```
-ANAF's SPV web service only answers over mutual TLS and sends no CORS headers, so a web page cannot read its responses. The service worker fetches the SPV URL the ContApp page asked for, with credentials included, so the browser performs the client-certificate handshake. The code accepts only URLs starting with https://webserviced.anaf.ro/SPVWS2/rest/ and rejects everything else.
+ANAF's SPV web service only answers over mutual TLS and sends no CORS headers, so a web page cannot read its responses. The service worker fetches the SPV URL the ContApp page asked for, with credentials included, so the browser performs the client-certificate handshake. The code accepts only URLs starting with https://webserviced.anaf.ro/SPVWS2/rest/ and rejects everything else; it never makes HTTP requests and never requests anything from anaf.ro.
+
+The other two parts of the patterns exist only for the login's cookie reset described under the cookies permission: chrome.cookies lists and removes a cookie only when the extension has host access to the cookie's domain, over http:// for a cookie without the Secure attribute, and to anaf.ro itself for a cookie set on .anaf.ro, which the browser also sends to webserviced.anaf.ro.
 ```
 
 Content script on `https://*.contapp.ro/*`:

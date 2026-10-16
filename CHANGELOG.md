@@ -39,6 +39,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- The login's cookie reset can see and delete every ANAF session cookie in Chrome: the extension now has host
+  access to `anaf.ro` (for cookies set on `.anaf.ro`) and over `http://` (for cookies without the Secure attribute),
+  without which Chrome leaves those cookies out of `cookies.getAll`. It still only requests
+  `https://webserviced.anaf.ro/SPVWS2/rest/`.
+- A login on a lost session also cancels the fetches queued behind the stuck ones, and fetches sent while the
+  cookies are being cleared wait for it, so none goes out with the dead session.
 - A reply the content script cannot decode now answers `extension` instead of leaving the page waiting forever.
 - Sandboxed (opaque-origin) ContApp documents get no bridge instead of a bridge whose replies throw.
 
