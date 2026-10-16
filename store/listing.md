@@ -111,8 +111,13 @@ The extension has a single purpose: it lets the ContApp application read ANAF's 
 
 ### Permission justifications
 
-The manifest declares no API permission. Opening the ANAF login tab (`chrome.tabs.create`) needs none; if a form
-asks why the extension opens tabs:
+The only API permission is `cookies`:
+
+```
+When the user clicks "Autentificare ANAF" in ContApp, the extension deletes the browser's cookies for webserviced.anaf.ro (chrome.cookies.getAll with domain webserviced.anaf.ro, then chrome.cookies.remove) before opening the login tab. After a failed certificate or PIN check, ANAF's gateway keeps answering the stale session cookie with an error page, so without this the user cannot log in again until the session expires. The extension never reads cookie values, never sets cookies and never touches cookies of any other site.
+```
+
+Opening the ANAF login tab (`chrome.tabs.create`) needs no permission; if a form asks why the extension opens tabs:
 
 ```
 When the user clicks "Autentificare ANAF" in ContApp, the extension opens the ANAF SPV address in a new tab (chrome.tabs.create, which needs no permission). A request made by the service worker cannot show the browser's client-certificate picker or the token's PIN prompt; a visible tab can. After the user picks the certificate in that tab, the browser can reuse it for the extension's requests. The extension does not query or read any tab.

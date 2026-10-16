@@ -47,9 +47,11 @@ automate.
 - **Certificatul și PIN-ul.** Alegerea certificatului și introducerea PIN-ului sunt gestionate de browser, de
   sistemul de operare și de programul tokenului sau al semnăturii în cloud. Extensia nu vede PIN-ul și nu are acces
   la cheia privată.
-- **Cookie-uri.** Extensia nu citește și nu salvează cookie-uri. Cererile pe care le trimite către ANAF includ însă
-  cookie-urile pe care browserul le are deja pentru `webserviced.anaf.ro` (cookie-ul de sesiune setat de ANAF după
-  autentificare), la fel ca orice cerere făcută din browser.
+- **Cookie-uri.** Extensia nu citește conținutul cookie-urilor și nu salvează cookie-uri. Cererile pe care le trimite
+  către ANAF includ cookie-urile pe care browserul le are deja pentru `webserviced.anaf.ro` (cookie-ul de sesiune
+  setat de ANAF după autentificare), la fel ca orice cerere făcută din browser. Când apăsați „Autentificare ANAF”,
+  extensia șterge cookie-urile browserului pentru `webserviced.anaf.ro`, ca autentificarea să înceapă o sesiune nouă
+  în locul uneia eșuate; alte site-uri nu sunt atinse.
 - **Istoric de navigare, conținutul altor site-uri, date de utilizare.** Extensia nu le accesează.
 
 Pentru datele contului dumneavoastră ContApp, Kronos IT Support & Consulting SRL este operator. Pentru datele din
@@ -105,6 +107,7 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](
 |---|---|
 | Acces la `https://webserviced.anaf.ro/*` | Citește răspunsurile serviciului SPV al ANAF, pe care paginile web nu le pot citi direct. Extensia acceptă doar adrese care încep cu `https://webserviced.anaf.ro/SPVWS2/rest/`. |
 | Script de conținut pe `https://*.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
+| Cookie-uri (`cookies`) | Șterge cookie-urile pentru `webserviced.anaf.ro` înainte de deschiderea filei de autentificare ANAF, ca o sesiune ANAF eșuată să nu blocheze o nouă autentificare. Nu citește valorile cookie-urilor și nu atinge alte site-uri. |
 
 Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa SPV, ca browserul să poată afișa alegerea
 certificatului și cererea de PIN; deschiderea filei nu necesită nicio permisiune, iar extensia nu citește filele
@@ -191,9 +194,11 @@ automated decisions.
 - **Certificate and PIN.** Choosing the certificate and entering the PIN are handled by the browser, the operating
   system and the token or cloud-signature software. The extension never sees the PIN and has no access to the
   private key.
-- **Cookies.** The extension reads and saves no cookies. The requests it sends to ANAF do carry the cookies the
-  browser already holds for `webserviced.anaf.ro` (the session cookie ANAF sets after authentication), like any
-  request made from the browser.
+- **Cookies.** The extension does not read cookie contents and saves no cookies. The requests it sends to ANAF carry
+  the cookies the browser already holds for `webserviced.anaf.ro` (the session cookie ANAF sets after
+  authentication), like any request made from the browser. When you click "Autentificare ANAF", the extension deletes
+  the browser's cookies for `webserviced.anaf.ro`, so the login starts a new session instead of reusing a failed
+  one; no other site is touched.
 - **Browsing history, other sites' content, usage data.** The extension does not access them.
 
 For your ContApp account data, Kronos IT Support & Consulting SRL is the controller. For the data in the SPV
@@ -243,6 +248,7 @@ only accepts requests from ContApp pages and only for addresses in ANAF's SPV se
 |---|---|
 | Host access to `https://webserviced.anaf.ro/*` | Reads responses from ANAF's SPV service, which web pages cannot read directly. The extension only accepts addresses starting with `https://webserviced.anaf.ro/SPVWS2/rest/`. |
 | Content script on `https://*.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
+| Cookies (`cookies`) | Deletes the cookies for `webserviced.anaf.ro` before the ANAF login tab opens, so a failed ANAF session cannot block a new login. It does not read cookie values and touches no other site. |
 
 To authenticate at ANAF, the extension opens a new tab on the SPV address so the browser can show the certificate
 picker and the PIN prompt; opening the tab needs no permission, and the extension does not read open tabs.

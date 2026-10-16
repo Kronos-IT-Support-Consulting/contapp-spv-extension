@@ -89,12 +89,15 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 |---|---|
 | `{type:"ping"}` | `{ok:true, version}` |
 | `{type:"fetch", url}` | `{ok:true, status, url, body}` with `body` an ArrayBuffer (structured clone) |
-| `{type:"login", url}` | `{ok:true}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
-| any | `{ok:false, error:"certificate_required"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
+| `{type:"login", url}` | `{ok:true}` after clearing the `webserviced.anaf.ro` cookies and `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
+| any | `{ok:false, error:"certificate_required"\|"timeout"\|"forbidden_url"\|"network"\|"extension"\|"unknown_type", message?}` |
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure. The page should offer the `login` action.
+- `timeout`: ANAF did not answer within 90 s, usually a handshake stuck on a certificate picker or PIN prompt that
+  never showed. The request is aborted so it stops holding one of Chrome's six connections to the host. The page
+  should offer the `login` action.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the SPV REST prefix
   (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
@@ -144,7 +147,7 @@ way to reach SPV, so any change to the message shapes above must ship in both re
      the **Autentificare ANAF** button appear. This is expected: a background request cannot show the
      certificate picker.
 3. **Authenticate at ANAF** — click **Autentificare ANAF**. A new tab opens on
-   `webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=1`. The browser shows the certificate picker;
+   `webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60`. The browser shows the certificate picker;
    choose the SPV certificate, then the token asks for its PIN. The tab ends on a raw JSON page (either
    a message list or `{"eroare":…}`). That JSON *is* the success: the browser now holds the ANAF
    session cookie and remembers the certificate for this host. Close the tab or leave it, both work.

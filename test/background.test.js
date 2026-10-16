@@ -11,9 +11,11 @@ const ANAF_URL = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
 
 // Runs background.js in its own realm with chrome.* stubbed. `fetchImpl(url, options, context)` plays fetch;
 // `context` lets a test throw the realm's own error classes, which is what instanceof checks in the worker see.
-function loadBackground(fetchImpl, { granted = true, createTab } = {}) {
+function loadBackground(fetchImpl, { granted = true, createTab, cookies = [], getAllCookies } = {}) {
     const fetchCalls = [];
     const createdTabs = [];
+    const removedCookies = [];
+    const events = [];
     const timers = [];
     const debug = [];
     let keepAlives = 0;
@@ -22,6 +24,8 @@ function loadBackground(fetchImpl, { granted = true, createTab } = {}) {
     const context = vm.createContext({
         URL,
         btoa,
+        // A plain object, so fetchCalls can clone it and a test can flip `aborted` the way the timeout would.
+        AbortSignal: { timeout: (ms) => ({ ms, aborted: false }) },
         setInterval: (callback, ms) => timers.push({ callback, ms, cleared: false }),
         clearInterval: (id) => (timers[id - 1].cleared = true),
         console: { debug: (...args) => debug.push(args) },
@@ -37,7 +41,19 @@ function loadBackground(fetchImpl, { granted = true, createTab } = {}) {
                 onMessage: { addListener: (callback) => (listener = callback) },
             },
             permissions: { contains: async () => granted },
-            tabs: { create: createTab ?? (async (tab) => createdTabs.push(structuredClone(tab))) },
+            tabs: {
+                create: createTab ?? (async (tab) => {
+                    events.push("tab");
+                    createdTabs.push(structuredClone(tab));
+                }),
+            },
+            cookies: {
+                getAll: getAllCookies ?? (async () => structuredClone(cookies)),
+                remove: async (details) => {
+                    events.push("cookie");
+                    removedCookies.push(structuredClone(details));
+                },
+            },
         },
     });
 
@@ -55,7 +71,7 @@ function loadBackground(fetchImpl, { granted = true, createTab } = {}) {
             assert.equal(listener(message, {}, respond), true, "the listener must return true to keep the port open");
         });
 
-    return { send, fetchCalls, createdTabs, timers, keepAlives: () => keepAlives, debug };
+    return { send, fetchCalls, createdTabs, removedCookies, events, timers, keepAlives: () => keepAlives, debug };
 }
 
 const unreachable = () => assert.fail("fetch must not be called");
@@ -77,7 +93,7 @@ test("the host the worker fetches from is the one the manifest asks permission f
     const origin = `${new URL(vm.runInContext("ALLOWED_PREFIX", context)).origin}/*`;
     assert.deepEqual(manifest.host_permissions, [origin]);
     assert.deepEqual(structuredClone(vm.runInContext("HOST_PERMISSION", context)), { origins: [origin] });
-    assert.equal(manifest.permissions, undefined, "no permission besides the host should be needed");
+    assert.deepEqual(manifest.permissions, ["cookies"], "only cookies, to reset ANAF's session before the login tab");
 });
 
 test("fetch and login refuse anything that does not resolve under the SPV REST API", async () => {
@@ -141,7 +157,10 @@ test("fetch returns status, final url and the body as base64, whatever the statu
             url: `${ANAF_URL}&final`,
             body: Buffer.from(bytes).toString("base64"),
         });
-        assert.deepEqual(fetchCalls, [{ url: ANAF_URL, options: { credentials: "include", redirect: "follow", cache: "no-store" } }]);
+        assert.deepEqual(fetchCalls, [{
+            url: ANAF_URL,
+            options: { credentials: "include", redirect: "follow", cache: "no-store", signal: { ms: 90_000, aborted: false } },
+        }]);
     }
 
     // HTTP errors are the page's business: they still arrive as ok:true with the status.
@@ -179,6 +198,23 @@ test("a body that cannot be read is a network error, even when the stream throws
     assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "network", message: "body stream already read" });
 });
 
+test("a fetch or a body read cut off by the timeout answers timeout, not certificate_required", async () => {
+    const timingOut = (url, options, context) => {
+        options.signal.aborted = true;
+        throw new (vm.runInContext("TypeError", context))("The operation was aborted due to timeout");
+    };
+
+    assert.deepEqual(await loadBackground(timingOut).send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
+
+    const slowBody = loadBackground(async (url, options, context) => ({
+        status: 200,
+        url: ANAF_URL,
+        arrayBuffer: async () => timingOut(url, options, context),
+    }));
+
+    assert.deepEqual(await slowBody.send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
+});
+
 test("a body too large for a runtime message is a network error instead of a reply that never arrives", async () => {
     const { send } = loadBackground(respond(200, new Uint8Array(48 * 1024 * 1024)));
     const response = await send({ type: "fetch", url: ANAF_URL });
@@ -210,6 +246,27 @@ test("the service worker is kept alive while a fetch is pending and left alone a
 
     assert.deepEqual(whileFetching, { timers: 1, keepAlives: 1 });
     assert.deepEqual(timers.map((timer) => [timer.ms, timer.cleared]), [[25_000, true]]);
+});
+
+test("login clears the ANAF cookies before it opens the tab, and opens it even when clearing fails", async () => {
+    const cookies = [
+        { name: "MRHSession", domain: "webserviced.anaf.ro", path: "/", storeId: "0" },
+        { name: "F5_ST", domain: ".webserviced.anaf.ro", path: "/SPVWS2", storeId: "0" },
+    ];
+    const { send, removedCookies, events } = loadBackground(unreachable, { cookies });
+
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true });
+    assert.deepEqual(removedCookies, [
+        { url: "https://webserviced.anaf.ro/", name: "MRHSession", storeId: "0" },
+        { url: "https://webserviced.anaf.ro/SPVWS2", name: "F5_ST", storeId: "0" },
+    ]);
+    assert.deepEqual(events, ["cookie", "cookie", "tab"]);
+
+    const getAllCookies = async () => { throw new Error("cookies API unavailable"); };
+    const failing = loadBackground(unreachable, { getAllCookies });
+
+    assert.deepEqual(await failing.send({ type: "login", url: ANAF_URL }), { ok: true });
+    assert.deepEqual(failing.createdTabs, [{ url: ANAF_URL }]);
 });
 
 test("login opens a tab, and a tab that cannot be opened is a network error", async () => {

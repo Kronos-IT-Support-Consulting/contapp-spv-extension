@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- A fetch gives up after 90 s and answers `timeout`. A handshake stuck on a certificate picker or PIN prompt that
+  never showed used to hang forever and hold one of the browser's connections to ANAF, so after a few retries
+  every request, the login tab included, queued behind them until the browser restarted.
+- `login` deletes the browser's `webserviced.anaf.ro` cookies before it opens the tab, so a session ANAF's gateway
+  marked as failed no longer sends every new login to its error page. This adds the `cookies` permission.
 - The Firefox build declares `data_collection_permissions` as personally identifying and financial information
   (the relayed SPV responses), which Firefox 140+ shows in the install prompt; Firefox 140 and Chrome 110 are the
   minimum versions.
