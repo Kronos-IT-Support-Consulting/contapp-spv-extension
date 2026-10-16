@@ -7,13 +7,15 @@
     "scripts": {
         "build": "./build.sh",
         "test": "node --test \"test/*.test.js\"",
-        "lint": "web-ext lint --source-dir dist/firefox --self-hosted"
+        "lint": "web-ext lint --source-dir dist/firefox --self-hosted",
+        "test:e2e": "node --test --test-concurrency=1 \"test/e2e/*.e2e.js\""
     },
     "engines": {
         "node": ">=22"
     },
     "devDependencies": {
         "chrome-webstore-upload-cli": "4.0.2",
+        "playwright": "^1.64.1",
         "web-ext": "^10.7.0"
     },
     "overrides": {

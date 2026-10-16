@@ -25,8 +25,25 @@ firefox='.background = {scripts: ["background.js"]} | del(.minimum_chrome_versio
 jq "$production | del(.browser_specific_settings)" manifest.json > dist/chrome/manifest.json
 jq "$production | $firefox" manifest.json > dist/firefox/manifest.json
 
+# Reproducible archives: the same commit gives byte-identical zips on any machine. Every entry gets the commit
+# time (SOURCE_DATE_EPOCH outside a git checkout, else 1980-01-02, the earliest safe zip date), fixed modes,
+# a sorted order, and no extra attributes (-X). zip stores local time, so everything runs in UTC.
+export TZ=UTC
+epoch=$(git log -1 --format=%ct 2>/dev/null || true)
+epoch=${epoch:-${SOURCE_DATE_EPOCH:-315619200}}
+# GNU date takes -d @epoch, BSD/macOS date takes -r epoch; touch -t reads the result the same way on both.
+stamp=$(date -u -d "@$epoch" +%Y%m%d%H%M.%S 2>/dev/null || date -u -r "$epoch" +%Y%m%d%H%M.%S)
+
 for target in chrome firefox; do
     archive="dist/contapp-spv-$target-$version.zip"
-    (cd "dist/$target" && zip -qrX "../$(basename "$archive")" . -x '.DS_Store' '*/.DS_Store')
+    (
+        cd "dist/$target"
+        find . -name .DS_Store -delete
+        find . -type d -exec chmod 755 {} +
+        find . -type f -exec chmod 644 {} +
+        find . -exec touch -h -t "$stamp" {} +
+        { find . -mindepth 1 -type d | sed 's|$|/|'; find . -type f; } \
+            | sed 's|^\./||' | LC_ALL=C sort | zip -qX "../$(basename "$archive")" -@
+    )
     echo "$archive"
 done

@@ -22,6 +22,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Required reviewers on this environment (Settings > Environments > store) hold the run before any step,
+    # including the GitHub release and the store uploads. Its secrets can live there instead of the repository.
+    environment: store
     env:
       # Only these booleans reach every step; the secrets and the GitHub token are scoped to the steps that use them.
       HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
@@ -48,6 +51,14 @@ jobs:
             echo "::error::$GITHUB_REF_NAME is not on $DEFAULT_BRANCH; releases are cut from reviewed commits only."
             exit 1
           fi
+
+      - name: jq is installed
+        run: |
+          if ! command -v jq > /dev/null; then
+            echo "::error::jq is missing on this runner; build.sh and the manifest checks need it."
+            exit 1
+          fi
+          jq --version
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -96,22 +107,50 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
 
       # Nothing in the lockfile needs an install script. Dependency code still runs in lint and the store steps,
-      # which is why the GitHub token only reaches the two steps that call gh.
+      # which is why the GitHub token only reaches the steps that call gh. The tests load only node: built-ins and
+      # build.sh only uses system tools, so the zips are built and hashed before any dependency code runs.
       - run: npm ci --ignore-scripts
 
       - run: npm test
 
       - run: ./build.sh
 
-      - run: npm run lint
+      # Step outputs are fixed once a step ends, so later (dependency) code cannot change these digests.
+      - name: Record the zip digests
+        id: digests
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for target in chrome firefox; do
+            zip="dist/contapp-spv-$target-$VERSION.zip"
+            sum=$(/usr/bin/sha256sum "$zip" | cut -d' ' -f1)
+            echo "$target=$sum" >> "$GITHUB_OUTPUT"
+            echo "\`$sum\`  $(basename "$zip")" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Release manifests carry only production hosts
+        run: |
+          for target in chrome firefox; do
+            jq -e '[.content_scripts[].matches[] | select(test("\\.test/"))] | length == 0' "dist/$target/manifest.json"
+          done
+
+      # web-ext is dependency code: it lints a copy, never the directory the zips came from.
+      - name: Lint a copy of the Firefox build
+        run: |
+          rm -rf "$RUNNER_TEMP/lint"
+          cp -R dist/firefox "$RUNNER_TEMP/lint"
+          npx --no-install web-ext lint --source-dir "$RUNNER_TEMP/lint" --self-hosted
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          CHROME_SHA256: ${{ steps.digests.outputs.chrome }}
+          FIREFOX_SHA256: ${{ steps.digests.outputs.firefox }}
         run: |
           zips=("dist/contapp-spv-chrome-$VERSION.zip" "dist/contapp-spv-firefox-$VERSION.zip")
+          printf '%s  %s\n' "$CHROME_SHA256" "${zips[0]}" "$FIREFOX_SHA256" "${zips[1]}" | /usr/bin/sha256sum --check --strict -
           if gh release view "$TAG" > /dev/null 2>&1; then
             # Re-run: keep the release and its notes, refresh the assets.
             gh release upload "$TAG" "${zips[@]}" --clobber
@@ -133,22 +172,41 @@ jobs:
           CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CHROME_SHA256: ${{ steps.digests.outputs.chrome }}
         # chrome-webstore-upload-cli is a pinned devDependency, so npm ci already installed it from the lockfile.
         # Without a subcommand it uploads and publishes.
-        run: npx --no-install chrome-webstore-upload --source "dist/contapp-spv-chrome-$VERSION.zip"
+        run: |
+          zip="dist/contapp-spv-chrome-$VERSION.zip"
+          echo "$CHROME_SHA256  $zip" | /usr/bin/sha256sum --check --strict -
+          npx --no-install chrome-webstore-upload --source "$zip"
 
       - name: Sign for Firefox (unlisted)
         id: amo
         if: env.HAS_AMO == 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          FIREFOX_SHA256: ${{ steps.digests.outputs.firefox }}
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # Signs exactly what the verified zip holds, not dist/firefox, which earlier dependency code could reach.
         run: |
-          npx --no-install web-ext sign --source-dir dist/firefox --channel unlisted --artifacts-dir dist/signed
-          gh release upload "$TAG" dist/signed/*.xpi --clobber
+          zip="dist/contapp-spv-firefox-$VERSION.zip"
+          echo "$FIREFOX_SHA256  $zip" | /usr/bin/sha256sum --check --strict -
+          rm -rf "$RUNNER_TEMP/amo-source" "$RUNNER_TEMP/signed"
+          unzip -q "$zip" -d "$RUNNER_TEMP/amo-source"
+          npx --no-install web-ext sign --source-dir "$RUNNER_TEMP/amo-source" --channel unlisted \
+            --artifacts-dir "$RUNNER_TEMP/signed"
+
+      # Separate from signing so the GitHub token never shares an environment with web-ext and the AMO secrets.
+      - name: Attach the signed Firefox build to the release
+        id: amo_attach
+        if: steps.amo.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP"/signed/*.xpi --clobber
 
       - name: Publish to Edge Add-ons
         id: edge
@@ -161,7 +219,9 @@ jobs:
           EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
           EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          CHROME_SHA256: ${{ steps.digests.outputs.chrome }}
         run: |
+          echo "$CHROME_SHA256  dist/contapp-spv-chrome-$VERSION.zip" | /usr/bin/sha256sum --check --strict -
           api="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID/submissions"
           auth=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
           tmp=$(mktemp -d)
@@ -209,7 +269,9 @@ jobs:
       - name: Every configured store took the release
         if: always()
         env:
-          RESULTS: cws=${{ steps.cws.outcome }} amo=${{ steps.amo.outcome }} edge=${{ steps.edge.outcome }}
+          RESULTS: >-
+            cws=${{ steps.cws.outcome }} amo=${{ steps.amo.outcome }} amo-attach=${{ steps.amo_attach.outcome }}
+            edge=${{ steps.edge.outcome }}
         run: |
           echo "$RESULTS"
           if [[ "$RESULTS" == *failure* ]]; then

@@ -41,6 +41,10 @@ jobs:
 
       - run: npm run lint
 
+      # Loads dist/chrome into Chromium; every request is answered by test routes, nothing reaches ANAF.
+      - name: Browser tests
+        run: npx playwright install --with-deps chromium && npm run test:e2e
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: contapp-spv-${{ github.sha }}

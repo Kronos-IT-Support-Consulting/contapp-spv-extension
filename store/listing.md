@@ -3,20 +3,18 @@
 Everything to copy-paste when creating the store items by hand. After the first submission the release workflow
 only ships new versions; these texts change only when edited here.
 
-Placeholder still to fill: the support URL marked *(placeholder)*.
-
 ## Common
 
-| Field | Value |
-|---|---|
-| Name | `ContApp SPV` |
-| Category | Productivity (if a subcategory is asked, pick the closest workflow/tools one) |
-| Language | Romanian |
-| Homepage | `https://contapp.ro` |
-| Support URL | `https://contapp.ro` *(placeholder — replace with the help/contact page when there is one)* |
-| Support e-mail | `suport@contapp.ro` |
+| Field | Value                                                                          |
+|---|--------------------------------------------------------------------------------|
+| Name | `ContApp SPV`                                                                  |
+| Category | Productivity (if a subcategory is asked, pick the closest workflow/tools one)  |
+| Language | Romanian                                                                       |
+| Homepage | `https://contapp.ro`                                                           |
+| Support URL | `https://contapp.ro/contact`                                                   |
+| Support e-mail | `suport@contapp.ro`                                                            |
 | Privacy policy URL | `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
-| Visibility | Chrome: *Unlisted* · Edge: *Hidden* · Firefox: unlisted / self-distributed |
+| Visibility | Chrome: *Unlisted* · Edge: *Hidden* · Firefox: unlisted / self-distributed     |
 
 ### Short description
 
@@ -131,10 +129,10 @@ ANAF's SPV web service only answers over mutual TLS and sends no CORS headers, s
 The other two parts of the patterns exist only for the login's cookie reset described under the cookies permission: chrome.cookies lists and removes a cookie only when the extension has host access to the cookie's domain, over http:// for a cookie without the Secure attribute, and to anaf.ro itself for a cookie set on .anaf.ro, which the browser also sends to webserviced.anaf.ro.
 ```
 
-Content script on `https://*.contapp.ro/*`:
+Content script on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`:
 
 ```
-The content script is the bridge between the ContApp page and the service worker: it receives the page's requests through window.postMessage (same origin only), forwards them to the service worker and posts the answer back. It also marks the page (data-spv-extension attribute) so ContApp knows the extension is installed. It runs only on ContApp domains.
+The content script is the bridge between the ContApp page and the service worker: it receives the page's requests through window.postMessage (same origin only), forwards them to the service worker and posts the answer back. It also marks the page (data-spv-extension attribute) so ContApp knows the extension is installed. It runs only on the ContApp application hosts, and the service worker refuses requests from any other page.
 ```
 
 Remote code: **No, I am not using remote code.**
@@ -175,7 +173,7 @@ Testing it end to end needs two things a reviewer normally does not have: a Cont
 3. The user clicks "Autentificare ANAF"; the extension opens that ANAF URL in a new tab (chrome.tabs.create, no extra permission), the browser shows the certificate picker and the token asks for its PIN.
 4. Back in ContApp, the same fetch now succeeds; the extension returns the JSON (or, for descarcare?id=..., the PDF bytes) to the ContApp page.
 
-Without a certificate you can still check: on any https://*.contapp.ro page, the extension answers a {channel:"contapp-spv", type:"ping"} message with its version, rejects any URL outside https://webserviced.anaf.ro/SPVWS2/rest/ with "forbidden_url", and a fetch of an SPV URL returns "certificate_required". The source is two short files, background.js and content.js.
+Without a certificate you can still check: on https://contabilitate.contapp.ro (or another ContApp application host), the extension answers a {channel:"contapp-spv", type:"ping"} message with its version, rejects any URL outside https://webserviced.anaf.ro/SPVWS2/rest/ with "forbidden_url", and a fetch of an SPV URL returns "certificate_required". The source is two short files, background.js and content.js.
 
 We can send a screencast of the full flow with a real certificate on request: suport@contapp.ro.
 ```
@@ -197,7 +195,7 @@ Same package as Chrome (`contapp-spv-chrome-<version>.zip`). Fields Partner Cent
 | Store listing | Short description | Read-only: Edge takes it from the manifest `description` |
 | Store listing | Extension logo | `store/icon-512.png` (Edge asks for 1:1, 128×128 minimum; 300×300 recommended) |
 | Store listing | Screenshots | `store/screenshots/*.png`, 1280×800 |
-| Store listing | Small / large promotional tile, YouTube video | Leave empty |
+| Store listing | Small / large promotional tile, YouTube video | Small tile: `store/promo-440x280.png`; large tile and video: leave empty |
 | Store listing | Search terms | `contapp`, `SPV`, `ANAF`, `certificat digital`, `declarații`, `contabilitate` |
 | Submission | Notes for certification | Same text as *Notes for the reviewer* above |
 
@@ -230,4 +228,4 @@ Testing end to end needs a ContApp account and a Romanian qualified certificate 
   | `05-autentificare-anaf.png` | Autentificarea la ANAF: browserul cere certificatul, iar tokenul cere PIN-ul. |
   | `06-instalare.png` | Instalarea extensiei din ContApp. |
 
-- [ ] Small promo tile 440×280 (optional, not made)
+- [x] Small promo tile 440×280 (PNG, RGB, no alpha): `store/promo-440x280.png`
