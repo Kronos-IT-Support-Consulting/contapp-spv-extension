@@ -30,7 +30,7 @@ const cookieUrl = ({ domain, secure }) => `${secure ? "https" : "http"}://${doma
 // The cookies API only sees what `hosts`, the manifest's host permissions by default, allows.
 function loadBackground(fetchImpl, {
     granted = true, createTab, cookies = [], getAllCookies, scheme = "chrome-extension", hosts = manifest.host_permissions, online = true,
-    anafTabs = [],
+    anafTabs = [], loadTab = (url) => url,
 } = {}) {
     const fetchCalls = [];
     const signals = [];
@@ -39,6 +39,11 @@ function loadBackground(fetchImpl, {
     const createdTabs = [];
     const removedCookies = [];
     const tabQueries = [];
+    const removedTabs = [];
+    const alarms = [];
+    let onAlarm;
+    // The browser's tabs. A tab the worker creates ends on loadTab(url), or never loads when that is null.
+    const tabs = structuredClone(anafTabs).map((tab) => ({ status: "complete", ...tab }));
     const injections = [];
     const events = [];
     const timers = [];
@@ -88,12 +93,34 @@ function loadBackground(fetchImpl, {
                 query: async (query) => {
                     tabQueries.push(structuredClone(query));
 
-                    return structuredClone(anafTabs);
+                    return structuredClone(tabs.filter((tab) => tab.url?.startsWith(query.url.replace(/\*$/, ""))));
                 },
                 create: createTab ?? (async (tab) => {
                     events.push("tab");
                     createdTabs.push(structuredClone(tab));
+
+                    const url = loadTab(tab.url);
+                    const created = { id: 100 + createdTabs.length, status: url === null ? "loading" : "complete", url: url ?? tab.url };
+                    tabs.push(created);
+
+                    return structuredClone(created);
                 }),
+                get: async (id) => {
+                    const tab = tabs.find((candidate) => candidate.id === id);
+
+                    return tab ? structuredClone(tab) : Promise.reject(new Error(`No tab with id: ${id}.`));
+                },
+                remove: async (ids) => {
+                    for (const id of [ids].flat()) {
+                        removedTabs.push(id);
+                        tabs.splice(tabs.findIndex((tab) => tab.id === id), 1);
+                    }
+                },
+                onUpdated: { addListener() {}, removeListener() {} },
+            },
+            alarms: {
+                create: (name, info) => alarms.push(structuredClone({ name, ...info })),
+                onAlarm: { addListener: (callback) => (onAlarm = callback) },
             },
             cookies: {
                 getAll: async (query) => {
@@ -158,6 +185,7 @@ function loadBackground(fetchImpl, {
 
     return {
         send, connect, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers, tabQueries, injections,
+        removedTabs, alarms, tabs, fireAlarm: (name) => onAlarm({ name }),
         keepAlives: () => keepAlives, debug, warnings,
     };
 }
@@ -454,7 +482,7 @@ test("in Safari the cookie query carries only the domain", async () => {
 });
 
 test("in Safari the fetch runs in the most recently used SPV tab and its answer reaches the page", async () => {
-    const anafTabs = [{ id: 3, lastAccessed: 10 }, { id: 7, lastAccessed: 20 }];
+    const anafTabs = [{ id: 3, lastAccessed: 10, url: ANAF_URL }, { id: 7, lastAccessed: 20, url: ANAF_URL }];
     const { send, fetchCalls, tabQueries, injections } = loadBackground(answered, { scheme: "safari-web-extension", anafTabs });
 
     const reply = await send({ type: "fetch", url: ANAF_URL });
@@ -465,14 +493,59 @@ test("in Safari the fetch runs in the most recently used SPV tab and its answer 
     assert.deepEqual(fetchCalls, [{ url: ANAF_URL, options: { credentials: "include", redirect: "follow", cache: "no-store" } }]);
 });
 
-test("in Safari without an open SPV tab the page is asked to log in, and nothing is fetched", async () => {
-    const { send } = loadBackground(unreachable, { scheme: "safari-web-extension" });
+test("in Safari without an SPV tab the worker opens its own in the background, shares it and closes it once idle", async () => {
+    const own = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=1#contapp-spv";
+    const user = { id: 9, url: "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60" };
+    const { send, createdTabs, injections, alarms, tabs, removedTabs, fireAlarm } = loadBackground(answered, { scheme: "safari-web-extension" });
 
-    assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "certificate_required" });
+    const replies = await Promise.all([send({ type: "fetch", url: ANAF_URL }), send({ type: "fetch", url: ANAF_URL })]);
+
+    assert.deepEqual(replies.map(({ ok }) => ok), [true, true]);
+    assert.deepEqual(createdTabs, [{ url: own, active: false }], "one tab for both requests");
+    assert.deepEqual(injections.map(({ target }) => target.tabId), [101, 101]);
+    assert.deepEqual(alarms, [
+        { name: "close-anaf-tab", delayInMinutes: 1 },
+        { name: "close-anaf-tab", delayInMinutes: 1 },
+    ]);
+
+    // The user's own SPV tab is left alone.
+    tabs.push(user);
+    await fireAlarm("close-anaf-tab");
+    await new Promise(setImmediate);
+    assert.deepEqual(removedTabs, [101]);
+    assert.deepEqual(tabs.map(({ id }) => id), [9]);
+});
+
+test("in Safari a tab of its own that lands outside the SPV API is a lost session, one that never loads asks for a login", async () => {
+    for (const [loadTab, error] of [
+        [() => "https://webserviced.anaf.ro/my.logout.php3?errorcode=19", "session_lost"],
+        [() => null, "certificate_required"],
+    ]) {
+        const { send, deadlines, removedTabs, fetchCalls } = loadBackground(unreachable, { scheme: "safari-web-extension", loadTab });
+        const reply = send({ type: "fetch", url: ANAF_URL });
+
+        if (error === "certificate_required") {
+            await new Promise(setImmediate);
+            deadlines.find(({ ms }) => ms === 30_000).callback();
+        }
+
+        assert.deepEqual(await reply, { ok: false, error }, error);
+        assert.deepEqual(removedTabs, [101], error);
+        assert.equal(fetchCalls.length, 0, error);
+    }
+});
+
+test("in Safari a login after a lost session closes the worker's own SPV tab before it opens the login tab", async () => {
+    const own = { id: 5, url: "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=1#contapp-spv" };
+    const { send, removedTabs, createdTabs } = loadBackground(unreachable, { scheme: "safari-web-extension", anafTabs: [own] });
+
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
+    assert.deepEqual(removedTabs, [5]);
+    assert.deepEqual(createdTabs, [{ url: ANAF_URL }]);
 });
 
 test("in Safari a tab fetch that leaves the SPV REST API or gets the gateway's page is a lost session", async () => {
-    const anafTabs = [{ id: 1 }];
+    const anafTabs = [{ id: 1, url: ANAF_URL }];
     const logout = "https://webserviced.anaf.ro/my.logout.php3?errorcode=19";
 
     for (const fetchImpl of [respond(200, new TextEncoder().encode("<html>"), logout), respond(200, new TextEncoder().encode("<html>"))]) {
@@ -483,7 +556,7 @@ test("in Safari a tab fetch that leaves the SPV REST API or gets the gateway's p
 });
 
 test("in Safari a tab fetch that fails answers network with the tab's error", async () => {
-    const { send } = loadBackground(throwing("TypeError", "Load failed"), { scheme: "safari-web-extension", anafTabs: [{ id: 1 }] });
+    const { send } = loadBackground(throwing("TypeError", "Load failed"), { scheme: "safari-web-extension", anafTabs: [{ id: 1, url: ANAF_URL }] });
 
     assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "network", message: "Load failed" });
 });

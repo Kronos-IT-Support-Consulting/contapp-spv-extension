@@ -29,8 +29,9 @@ jq "$production | $firefox" manifest.json > dist/firefox/manifest.json
 # Never ship a Safari app built that way.
 safari_hosts=$production
 [ "${SAFARI_DEV:-}" = 1 ] && safari_hosts='.'
-# Safari runs each SPV request inside the ANAF tab (see fetchInAnafTab in background.js), which takes scripting.
-jq "$safari_hosts | del(.minimum_chrome_version) | .permissions += [\"scripting\"] | .browser_specific_settings = {safari: {strict_min_version: \"18.0\"}}" \
+# Safari runs each SPV request inside an ANAF tab (see fetchInAnafTab in background.js), which takes scripting, and
+# closes the tab it opened for that with an alarm.
+jq "$safari_hosts | del(.minimum_chrome_version) | .permissions += [\"scripting\", \"alarms\"] | .browser_specific_settings = {safari: {strict_min_version: \"18.0\"}}" \
     manifest.json > dist/safari/manifest.json
 
 # Reproducible archives: the same commit gives byte-identical zips on any machine. Every entry gets the commit

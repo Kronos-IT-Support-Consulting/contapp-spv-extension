@@ -9,9 +9,9 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 
 - A Safari (macOS) build: `build.sh` also writes `dist/safari` (`SAFARI_DEV=1` keeps the `contapp.test` hosts), and
-  `safari.sh` wraps it in the Xcode project Safari needs. In Safari the SPV requests run in the open ANAF tab, since a
-  background request does not carry the client certificate and ANAF ends the session for it; without that tab a
-  fetch answers `certificate_required`.
+  `safari.sh` wraps it in the Xcode project Safari needs. In Safari the SPV requests run in an ANAF tab, since a
+  background request does not carry the client certificate and ANAF ends the session for it. Without one open, the
+  extension opens its own in the background and closes it after a minute without requests.
 - A `session_lost` answer is logged in the worker's console with the status and the URL it ended on.
 
 ### Changed

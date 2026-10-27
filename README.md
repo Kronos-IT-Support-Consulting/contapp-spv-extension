@@ -108,9 +108,16 @@ session cookie but not the client certificate the session was opened with (Safar
 tab), and F5 answers it with its logout page, `my.logout.php3?errorcode=19`, which ends the session. The same request
 sent from the SPV page in a tab gets the JSON. So in Safari the worker finds the most recently used tab under
 `https://webserviced.anaf.ro/SPVWS2/rest/`, runs the fetch there as the page's own script
-(`chrome.scripting.executeScript`, `world: "MAIN"`, hence the `scripting` permission in the Safari build only) and
-checks the answer like any other. Without such a tab it answers `certificate_required`, so the page offers `login`,
-which opens one. **The user has to keep that tab open while ContApp syncs.** The page-facing protocol is unchanged.
+(`chrome.scripting.executeScript`, `world: "MAIN"`) and checks the answer like any other. The page-facing protocol
+is unchanged.
+
+When no such tab is open, the worker opens its own in the background (`listaMesaje?zile=1#contapp-spv`; the fragment
+marks it and never reaches ANAF). While the session lives, Safari loads it without asking for anything, so the user
+only sees a tab come and go in the tab bar. An alarm closes it after a minute without requests; the user's own SPV
+tabs are never closed. If that tab ends outside the SPV API (F5's pages) the request answers `session_lost`, and if
+it has not loaded within 30 s (a certificate prompt nobody sees) `certificate_required`; either way the tab is closed
+and the page offers `login`, which also closes the worker's own tab once the session is lost. The Safari build alone
+adds the `scripting` and `alarms` permissions.
 
 Tried on 2026-10-27, Safari on macOS 27 with a USB token, against a local ContApp: login, *Verifică* (CNP, certificate
 series, CUIs) and the inbox sync work through the tab. Still to check:
@@ -150,7 +157,8 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure while the browser is online (offline it is `network` with the message `offline`). In Safari it
-  means no SPV tab is open to run the request in (see *Safari* above). The page should offer the `login` action.
+  also means the SPV tab the worker opened did not load within 30 s (see *Safari* above). The page should offer the
+  `login` action.
 - `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
   `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
   answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). No body is handed over. The page
@@ -276,8 +284,8 @@ The snippets use `.then` rather than top-level `await`, which Safari's console d
    ```
 5. Fetch before login, expect `certificate_required`: `ask({ type: "fetch", url }).then(show)`.
 6. Login: `ask({ type: "login", url }).then(show)`. Expect `reset: "cleared"`: the fetch in step 5 found no session.
-   A tab opens; pick the certificate, enter the PIN and confirm JSON shows. Close the tab in Chrome and Firefox;
-   in Safari keep it open, the requests run in it.
+   A tab opens; pick the certificate, enter the PIN, confirm JSON shows, then close the tab. (In Safari the next
+   request opens an SPV tab of its own in the background and closes it a minute later.)
 7. Fetch again: `ask({ type: "fetch", url }).then(show)`. Expect status 200 and the messages JSON.
 8. Download one message: take an `id` from step 7 and run
    `ask({ type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=<id>" }).then(show)`;
