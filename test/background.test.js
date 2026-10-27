@@ -29,7 +29,8 @@ const cookieUrl = ({ domain, secure }) => `${secure ? "https" : "http"}://${doma
 // `context` lets a test throw the realm's own error classes, which is what instanceof checks in the worker see.
 // The cookies API only sees what `hosts`, the manifest's host permissions by default, allows.
 function loadBackground(fetchImpl, {
-    granted = true, createTab, cookies = [], getAllCookies, firefox = false, hosts = manifest.host_permissions, online = true,
+    granted = true, createTab, cookies = [], getAllCookies, scheme = "chrome-extension", hosts = manifest.host_permissions, online = true,
+    anafTabs = [],
 } = {}) {
     const fetchCalls = [];
     const signals = [];
@@ -37,6 +38,8 @@ function loadBackground(fetchImpl, {
     const cookieQueries = [];
     const createdTabs = [];
     const removedCookies = [];
+    const tabQueries = [];
+    const injections = [];
     const events = [];
     const timers = [];
     const debug = [];
@@ -69,10 +72,24 @@ function loadBackground(fetchImpl, {
                 id: EXTENSION_ID,
                 getManifest: () => ({ version: "9.8.7", content_scripts: manifest.content_scripts }),
                 getPlatformInfo: async () => keepAlives++,
+                getURL: (file) => `${scheme}://${EXTENSION_ID}/${file}`,
                 onConnect: { addListener: (callback) => (onConnect = callback) },
             },
             permissions: { contains: async () => granted },
+            // Safari runs the request in an open ANAF tab: the injected function really runs, against the stubbed fetch.
+            scripting: {
+                executeScript: async ({ target, world, func, args }) => {
+                    injections.push(structuredClone({ target, world, args }));
+
+                    return [{ result: await func(...args) }];
+                },
+            },
             tabs: {
+                query: async (query) => {
+                    tabQueries.push(structuredClone(query));
+
+                    return structuredClone(anafTabs);
+                },
                 create: createTab ?? (async (tab) => {
                     events.push("tab");
                     createdTabs.push(structuredClone(tab));
@@ -96,7 +113,8 @@ function loadBackground(fetchImpl, {
                 },
             },
         },
-        ...(firefox && { browser: {} }),
+        // Firefox and Safari both define `browser`; only the URL scheme tells them apart.
+        ...(scheme !== "chrome-extension" && { browser: {} }),
     });
 
     vm.runInContext(source, context);
@@ -139,7 +157,7 @@ function loadBackground(fetchImpl, {
     const send = (message, sender) => connect(message, sender).reply;
 
     return {
-        send, connect, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        send, connect, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers, tabQueries, injections,
         keepAlives: () => keepAlives, debug, warnings,
     };
 }
@@ -419,11 +437,55 @@ test("login clears every cookie the ANAF host receives, partitioned or on .anaf.
 
 test("in Firefox the cookie query covers first-party isolation and removal passes the cookie's first-party domain", async () => {
     const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "firefox-default", firstPartyDomain: "" }];
-    const { send, removedCookies, cookieQueries } = loadBackground(unreachable, { cookies, firefox: true });
+    const { send, removedCookies, cookieQueries } = loadBackground(unreachable, { cookies, scheme: "moz-extension" });
 
     assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
     assert.deepEqual(cookieQueries, [{ domain: "anaf.ro", partitionKey: {}, firstPartyDomain: null }]);
     assert.deepEqual(removedCookies, [{ url: "https://webserviced.anaf.ro/", name: "MRHSession", storeId: "firefox-default", firstPartyDomain: "" }]);
+});
+
+test("in Safari the cookie query carries only the domain", async () => {
+    const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" }];
+    const { send, removedCookies, cookieQueries } = loadBackground(unreachable, { cookies, scheme: "safari-web-extension" });
+
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
+    assert.deepEqual(cookieQueries, [{ domain: "anaf.ro" }]);
+    assert.deepEqual(removedCookies, [{ url: "https://webserviced.anaf.ro/", name: "MRHSession", storeId: "0" }]);
+});
+
+test("in Safari the fetch runs in the most recently used SPV tab and its answer reaches the page", async () => {
+    const anafTabs = [{ id: 3, lastAccessed: 10 }, { id: 7, lastAccessed: 20 }];
+    const { send, fetchCalls, tabQueries, injections } = loadBackground(answered, { scheme: "safari-web-extension", anafTabs });
+
+    const reply = await send({ type: "fetch", url: ANAF_URL });
+
+    assert.deepEqual(reply, { ok: true, status: 200, url: ANAF_URL, body: Buffer.from(JSON_BODY).toString("base64") });
+    assert.deepEqual(tabQueries, [{ url: "https://webserviced.anaf.ro/SPVWS2/rest/*" }]);
+    assert.deepEqual(injections, [{ target: { tabId: 7 }, world: "MAIN", args: [ANAF_URL] }]);
+    assert.deepEqual(fetchCalls, [{ url: ANAF_URL, options: { credentials: "include", redirect: "follow", cache: "no-store" } }]);
+});
+
+test("in Safari without an open SPV tab the page is asked to log in, and nothing is fetched", async () => {
+    const { send } = loadBackground(unreachable, { scheme: "safari-web-extension" });
+
+    assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "certificate_required" });
+});
+
+test("in Safari a tab fetch that leaves the SPV REST API or gets the gateway's page is a lost session", async () => {
+    const anafTabs = [{ id: 1 }];
+    const logout = "https://webserviced.anaf.ro/my.logout.php3?errorcode=19";
+
+    for (const fetchImpl of [respond(200, new TextEncoder().encode("<html>"), logout), respond(200, new TextEncoder().encode("<html>"))]) {
+        const { send } = loadBackground(fetchImpl, { scheme: "safari-web-extension", anafTabs });
+
+        assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "session_lost" });
+    }
+});
+
+test("in Safari a tab fetch that fails answers network with the tab's error", async () => {
+    const { send } = loadBackground(throwing("TypeError", "Load failed"), { scheme: "safari-web-extension", anafTabs: [{ id: 1 }] });
+
+    assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "network", message: "Load failed" });
 });
 
 test("a session reset that cannot run is reported and logged, and the tab still opens", async () => {
@@ -565,6 +627,8 @@ test("only the ContApp hosts the content script runs on may open a port", async 
         { id: EXTENSION_ID, url: "https://evil.contabilitate.contapp.ro/" },
         { id: EXTENSION_ID, url: "https://contabilitate.contapp.ro.evil.example/" },
         { id: EXTENSION_ID, url: "http://contabilitate.contapp.ro/" },
+        // Only the ContApp subdomains are served, in development too.
+        { id: EXTENSION_ID, url: "https://contapp.test/" },
         { id: "another-extension", url: CONTAPP.url },
     ];
 
@@ -574,7 +638,7 @@ test("only the ContApp hosts the content script runs on may open a port", async 
     assert.equal(fetchCalls.length, 0);
 
     const hosts = ["account", "contabilitate", "declaratiaunica"];
-    for (const url of [...hosts.map((host) => `https://${host}.contapp.ro/x?y`), "https://app.contapp.test/", "https://contapp.test/"]) {
+    for (const url of [...hosts.map((host) => `https://${host}.contapp.ro/x?y`), "https://app.contapp.test/"]) {
         assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url }), { ok: true, version: "9.8.7" }, url);
     }
 });

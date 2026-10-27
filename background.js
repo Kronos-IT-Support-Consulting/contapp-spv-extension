@@ -53,6 +53,23 @@ function toBase64(buffer) {
     return btoa(binary);
 }
 
+function fromBase64(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    return bytes.buffer;
+}
+
+// chrome-extension:, moz-extension: or safari-web-extension:. Safari defines `browser` like Firefox does, so that
+// global cannot tell them apart.
+function extensionScheme() {
+    return new URL(chrome.runtime.getURL("")).protocol;
+}
+
 function networkError(reason) {
     return { ok: false, error: "network", message: String(reason?.message ?? reason) };
 }
@@ -165,29 +182,98 @@ async function fetchBody(url, signal, onHeaders) {
     // A lost session redirects to F5's login pages. Whatever ends up outside the SPV REST API, plain http:// included,
     // is not read, let alone handed to the page.
     if (!allowedUrl(response.url)) {
+        console.debug("ContApp SPV session lost: redirected to", response.status, response.url);
         response.body?.cancel().catch(() => {});
 
         return { ok: false, error: SESSION_LOST };
     }
 
+    let buffer;
+
     try {
-        const buffer = await response.arrayBuffer();
-
-        if (buffer.byteLength > MAX_BODY_BYTES) {
-            return networkError(`response of ${buffer.byteLength} bytes is too large to pass to the page`);
-        }
-
-        // The gateway can also answer under the prefix, with its own HTML page.
-        if (response.status < 400 && !isRestAnswer(buffer)) {
-            return { ok: false, error: SESSION_LOST };
-        }
-
-        return { ok: true, status: response.status, url: response.url, body: toBase64(buffer) };
+        buffer = await response.arrayBuffer();
     } catch (error) {
         console.debug("ContApp SPV body read failed", error);
 
         return networkError(error);
     }
+
+    return restReply(response.status, response.url, buffer);
+}
+
+// The reply for an answer from under the SPV prefix. The gateway can also answer there, with its own HTML page.
+function restReply(status, url, buffer) {
+    if (buffer.byteLength > MAX_BODY_BYTES) {
+        return networkError(`response of ${buffer.byteLength} bytes is too large to pass to the page`);
+    }
+
+    if (status < 400 && !isRestAnswer(buffer)) {
+        console.debug("ContApp SPV session lost: not a REST answer", status, url);
+
+        return { ok: false, error: SESSION_LOST };
+    }
+
+    return { ok: true, status, url, body: toBase64(buffer) };
+}
+
+// Runs in the ANAF tab as the page's own script, so it has nothing but its argument: no closure, no worker helpers.
+async function fetchFromPage(url) {
+    try {
+        const response = await fetch(url, { credentials: "include", redirect: "follow", cache: "no-store" });
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = "";
+
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + 0x8000));
+        }
+
+        return { status: response.status, url: response.url, body: btoa(binary) };
+    } catch (error) {
+        return { error: String(error?.message ?? error) };
+    }
+}
+
+// Safari sends a background fetch the ANAF session cookie but not the client certificate the session was opened
+// with, and the F5 gateway logs the session out (my.logout.php3?errorcode=19). A fetch from an SPV page open in a tab
+// goes out as that page's own, so in Safari the request runs there. Without such a tab the page has to log in, which
+// opens one; the user has to keep it open while ContApp syncs.
+async function fetchInAnafTab(url, signal, onHeaders) {
+    const tabs = await chrome.tabs.query({ url: `${ALLOWED_PREFIX}*` });
+    const tab = tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
+
+    if (!tab) {
+        return { ok: false, error: "certificate_required" };
+    }
+
+    // The tab's connection is already up, so there is no handshake to wait for: the whole fetch gets the body deadline.
+    onHeaders();
+
+    // The fetch in the tab cannot be aborted from here; the request stops waiting for it instead.
+    const aborted = new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    let answer;
+
+    try {
+        const injection = chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: fetchFromPage, args: [url] });
+        [{ result: answer }] = await Promise.race([injection, aborted]);
+    } catch (error) {
+        console.debug("ContApp SPV fetch in the ANAF tab failed", error);
+
+        return networkError(error);
+    }
+
+    if (typeof answer?.body !== "string") {
+        console.debug("ContApp SPV fetch in the ANAF tab failed", answer?.error);
+
+        return networkError(answer?.error ?? "no answer from the ANAF tab");
+    }
+
+    if (!allowedUrl(answer.url)) {
+        console.debug("ContApp SPV session lost: redirected to", answer.status, answer.url);
+
+        return { ok: false, error: SESSION_LOST };
+    }
+
+    return restReply(answer.status, answer.url, fromBase64(answer.body));
 }
 
 // `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every fetch.
@@ -217,7 +303,8 @@ async function proxyFetch(url, controller) {
         const abortAfter = (ms) => setTimeout(() => controller.abort(TIMED_OUT), ms);
         deadline = abortAfter(FETCH_TIMEOUT_MS);
 
-        const reply = await fetchBody(url, controller.signal, () => {
+        const fetchVia = extensionScheme() === "safari-web-extension:" ? fetchInAnafTab : fetchBody;
+        const reply = await fetchVia(url, controller.signal, () => {
             clearTimeout(deadline);
             deadline = abortAfter(BODY_TIMEOUT_MS);
         });
@@ -226,7 +313,7 @@ async function proxyFetch(url, controller) {
             return { ok: false, error: controller.signal.reason === TIMED_OUT ? TIMED_OUT : CANCELLED };
         }
 
-        // fetchBody only answers ok for a REST answer under the SPV prefix.
+        // Both only answer ok for a REST answer under the SPV prefix.
         sessionAlive = reply.ok && reply.status < 400;
 
         return reply;
@@ -241,10 +328,18 @@ async function proxyFetch(url, controller) {
 }
 
 // Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all.
+// Safari's cookies API takes neither that key nor partitionKey.
 function cookieQuery() {
-    const query = { domain: ANAF_DOMAIN, partitionKey: {} };
+    const query = { domain: ANAF_DOMAIN };
 
-    return typeof browser === "undefined" ? query : { ...query, firstPartyDomain: null };
+    switch (extensionScheme()) {
+        case "moz-extension:":
+            return { ...query, partitionKey: {}, firstPartyDomain: null };
+        case "safari-web-extension:":
+            return query;
+        default:
+            return { ...query, partitionKey: {} };
+    }
 }
 
 // The browser sends the host its own cookies and those set on a parent domain such as .anaf.ro.

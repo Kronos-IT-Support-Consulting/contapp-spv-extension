@@ -6,8 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- A Safari (macOS) build: `build.sh` also writes `dist/safari` (`SAFARI_DEV=1` keeps the `contapp.test` hosts), and
+  `safari.sh` wraps it in the Xcode project Safari needs. In Safari the SPV requests run in the open ANAF tab, since a
+  background request does not carry the client certificate and ANAF ends the session for it; without that tab a
+  fetch answers `certificate_required`.
+- A `session_lost` answer is logged in the worker's console with the status and the URL it ended on.
+
 ### Changed
 
+- The development hosts are only the `*.contapp.test` subdomains; the bare `contapp.test` is no longer served.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or
