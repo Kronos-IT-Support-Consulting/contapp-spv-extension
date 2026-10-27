@@ -27,7 +27,8 @@ See [PRIVACY.md](PRIVACY.md).
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
 | `build.sh` | Writes `dist/chrome`, `dist/firefox` and `dist/safari`, and zips the first two (requires `jq` and `zip`). |
-| `safari.sh` | Generates the Xcode project that wraps `dist/safari` for Safari (requires Xcode). |
+| `safari/` | The Xcode project of the macOS app that carries the Safari extension, and `app-icon.swift`, which renders its icons. |
+| `safari.sh` | Generated that Xcode project once (requires Xcode); refuses to overwrite it. |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
 | `store/` | Store listing texts, the 512 px store icon and the screenshots. |
 | `PRIVACY.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` | Privacy policy (published by GitHub Pages), changelog, security policy, contribution rules, MIT licence. |
@@ -79,11 +80,12 @@ advisory warning about the Android minimum version, which is expected.
 Safari only runs web extensions shipped inside a macOS app, so there is no zip to download. With the full Xcode
 installed (not only the command line tools):
 
-1. `./safari.sh` builds `dist/safari` and generates the Xcode project in `safari/` (app *ContApp SPV*, bundle id
-   `ro.contapp.spv`, extension `ro.contapp.spv.Extension`; the ids cannot change once the app is on the App Store).
-   The script also fixes what the converter gets wrong: an app id the extension id does not start with, and a
-   deployment target of the macOS it runs on (it sets macOS 13, the oldest that runs Safari 18). The project references
-   `dist/safari` rather than copying it, so after a source change `./build.sh` and a rebuild in Xcode are enough.
+1. `./build.sh` writes `dist/safari`. The Xcode project in `safari/` wraps it (app *ContApp SPV*, bundle id
+   `ro.contapp.spv`, extension `ro.contapp.spv.Extension`; the ids cannot change once the app is on the App Store) and
+   references `dist/safari` rather than copying it, so after a source change `./build.sh` and a rebuild in Xcode are
+   enough. `safari.sh` generated the project once with Apple's converter and now refuses to run while it exists: the
+   project is edited since, and regenerating it would undo that (the app id the extension id has to start with, macOS
+   13, the team, the App Store settings below, the Romanian app window).
 2. Open `safari/ContApp SPV/ContApp SPV.xcodeproj`, pick the *ContApp SPV* scheme and **Run**; without an Apple team, set
    signing to *Sign to Run Locally*. The app window has a button that opens Safari's extension settings.
 3. Only for a build signed to run locally: Safari → Settings → Advanced → *Show features for web developers*, then
@@ -93,10 +95,17 @@ installed (not only the command line tools):
    ContApp hosts. Safari asks for every site, content-script hosts included: until the ContApp host is allowed, the
    page sees no `data-spv-extension` and shows the install callout.
 
-For local development run `SAFARI_DEV=1 ./build.sh` (or `SAFARI_DEV=1 ./safari.sh`) and rebuild in Xcode:
+For local development run `SAFARI_DEV=1 ./build.sh` and rebuild in Xcode:
 `dist/safari` then keeps the `contapp.test` hosts, which Safari needs because it has no load-unpacked. A plain
 `./build.sh` drops them again; never ship an app built from a development `dist/safari`. The project signs with the
-Apple Developer team `JGKF87DT24`, which `safari.sh` writes in.
+Apple Developer team `JGKF87DT24`.
+
+For the Mac App Store the app declares the *Productivity* category and no non-exempt encryption
+(`ITSAppUsesNonExemptEncryption = NO`, it only uses the system's HTTPS), and its version (`MARKETING_VERSION`, now
+`1.0.0`) should match the extension's; raise the build number (`CURRENT_PROJECT_VERSION`) on every upload. The app
+icon set is rendered from `icons/icon.svg` by `swift safari/app-icon.swift`. To upload: a plain `./build.sh` (never
+`SAFARI_DEV=1`), then in Xcode the *ContApp SPV* scheme, destination *Any Mac*, **Product → Archive**, and in the
+Organizer **Distribute App → App Store Connect**.
 
 The Safari manifest drops `minimum_chrome_version` and asks for Safari 18 (`browser_specific_settings.safari`). In
 Safari the cookie query sends only `domain`: Safari's cookies API takes neither `partitionKey` nor `firstPartyDomain`.

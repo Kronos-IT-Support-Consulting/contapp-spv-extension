@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Wraps dist/safari in the macOS app Safari installs extensions from, as an Xcode project in safari/.
-# Needs the full Xcode, not only the command line tools. The project points at dist/safari instead of copying it,
-# so rerunning ./build.sh is enough to pick up a change; rerun this script only when the manifest's shape changes.
+# Generated the Xcode project in safari/ that wraps dist/safari in the macOS app Safari installs extensions from.
+# The project is committed and edited since (App Store settings, icons from safari/app-icon.swift, the Romanian app
+# window), so this only runs where it does not exist yet; regenerating it would throw those edits away. Needs the full
+# Xcode, not only the command line tools. The project points at dist/safari, so ./build.sh picks up source changes.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+if [ -e "safari/ContApp SPV/ContApp SPV.xcodeproj" ]; then
+    echo "safari/ContApp SPV already exists; run ./build.sh and rebuild in Xcode instead." >&2
+    exit 1
+fi
 
 ./build.sh > /dev/null
 xcrun safari-web-extension-converter dist/safari \
