@@ -16,7 +16,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- The development hosts are only the `*.contapp.test` subdomains; the bare `contapp.test` is no longer served.
+- The development hosts mirror the production ones: `https://{account,contabilitate,declaratiaunica}.contapp.test/*`
+  instead of every `contapp.test` host.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or
